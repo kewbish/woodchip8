@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	coll "github.com/golang-collections/collections/stack"
 )
@@ -14,6 +15,14 @@ var (
 	regs   [16]int
 	stack  *coll.Stack
 )
+
+type instruction struct {
+	x   byte
+	y   byte
+	n   byte
+	nn  byte
+	nnn int
+}
 
 var FONT []byte = []byte{
 	// from http://devernay.free.fr/hacks/chip8/C8TECH10.HTM#font
@@ -53,6 +62,25 @@ func initializeMemory(debug bool) {
 	stack = coll.New()
 }
 
+func runRom() {
+	for true {
+		ins := memory[pc : pc+2]
+		pc += 2
+		x := ins[0] & 0xff
+		y := (ins[1] >> 4) & 0xff
+		n := ins[1] & 0xff
+		nn := ins[1]
+		nnn := (int((ins[1]>>4)&0xff) << 12) | int(ins[1])
+		insArg := instruction{x, y, n, nn, nnn}
+		fmt.Printf("%x %x %x %x %x", insArg.x, insArg.y, insArg.n, insArg.nn, insArg.nnn)
+		// short delay, simulate tick
+		time.Sleep(1 / 700 * time.Second)
+		// break early for temp debugging
+		os.Exit(0)
+	}
+}
+
 func main() {
 	initializeMemory(false)
+	runRom()
 }
