@@ -5,17 +5,18 @@ import (
 	"os"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	coll "github.com/golang-collections/collections/stack"
 )
 
-var (
+type model struct {
 	memory [4096]byte
 	pc     int
 	index  int16
 	regs   [16]byte
 	stack  *coll.Stack
 	screen [32][64]bool
-)
+}
 
 type instruction struct {
 	opCode byte
@@ -46,72 +47,97 @@ var FONT []byte = []byte{
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
 
-func initializeMemory(debug bool) {
+func initializeMemory(debug bool) model {
 	data, error := os.ReadFile("chip8-test.ch8")
 	if error != nil {
 		panic(error)
 	}
-	copy(memory[0x200:], data)
-	copy(memory[0x50:0x9F], FONT)
+	new_memory := model{}
+	new_memory.pc = 0x200
+	new_memory.index = 0
+	new_memory.stack = coll.New()
+	copy(new_memory.memory[0x200:], data)
+	copy(new_memory.memory[0x50:0x9F], FONT)
 	if debug {
-		for i := 0; i < len(memory); i++ {
-			fmt.Printf("%04x\t", memory[i])
+		for i := 0; i < len(new_memory.memory); i++ {
+			fmt.Printf("%04x\t", new_memory.memory[i])
 		}
 	}
-	pc = 0x200
-	index = 0
-	stack = coll.New()
+	return new_memory
 }
 
-func runRom() {
-	for true {
-		ins := memory[pc : pc+2]
-		pc += 2
-		opCode := (ins[0] >> 4) & 0xff
-		x := ins[0] & 0xff
-		y := (ins[1] >> 4) & 0xff
-		n := ins[1] & 0xff
-		nn := ins[1]
-		nnn := (int16((ins[1]>>4)&0xff) << 12) | int16(ins[1])
-		insArg := instruction{opCode, x, y, n, nn, nnn}
-		execute(insArg)
-		// short delay, simulate tick
-		time.Sleep(1 / 700 * time.Second)
-		// break early for temp debugging
-		os.Exit(0)
-	}
+func (m model) Init() tea.Cmd {
+	return nil
 }
 
-func execute(ins instruction) {
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	ins := m.memory[m.pc : m.pc+2]
+	m.pc += 2
+	opCode := (ins[0] >> 4) & 0xff
+	x := ins[0] & 0xff
+	y := (ins[1] >> 4) & 0xff
+	n := ins[1] & 0xff
+	nn := ins[1]
+	nnn := (int16((ins[1]>>4)&0xff) << 12) | int16(ins[1])
+	insArg := instruction{opCode, x, y, n, nn, nnn}
+	m = execute(m, insArg)
+	// short delay, simulate tick
+	// TODO: this is currently broken with bubbletea
+	time.Sleep(1 / 700 * time.Second)
+	// break early for temp debugging
+	os.Exit(0)
+	return m, nil
+}
+
+func execute(m model, ins instruction) model {
 	switch ins.opCode {
 	case 0:
 		if ins.x == 0 && ins.y == 0xe && ins.n == 0 {
 			for i := 0; i < 32; i++ {
 				for j := 0; j < 64; j++ {
-					screen[i][j] = false
+					m.screen[i][j] = false
 				}
 			}
 			break
 		}
 		break
 	case 1:
-		pc = int(ins.nnn)
+		m.pc = int(ins.nnn)
 		break
 	case 6:
-		regs[ins.x] = ins.nn
+		m.regs[ins.x] = ins.nn
 		break
 	case 7:
-		regs[ins.x] += ins.nn
+		m.regs[ins.x] += ins.nn
 		break
 	case 0xa:
-		index = int16(ins.nnn)
+		m.index = int16(ins.nnn)
 		break
 	default:
 		break
 	}
+	return m
+}
+
+func (m model) View() string {
+	s := ""
+	for _, line := range m.screen {
+		for _, col := range line {
+			if col {
+				s += "█"
+			} else {
+				s += " "
+			}
+		}
+		s += "\n"
+	}
+	return s
 }
 
 func main() {
-	initializeMemory(false)
-	runRom()
+	p := tea.NewProgram(initializeMemory(false))
+	if _, err := p.Run(); err != nil {
+		fmt.Printf("Error: %v", err)
+		os.Exit(1)
+	}
 }
