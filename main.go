@@ -14,6 +14,7 @@ var (
 	index  int16
 	regs   [16]byte
 	stack  *coll.Stack
+	screen [32][64]bool
 )
 
 type instruction struct {
@@ -57,7 +58,6 @@ func initializeMemory(debug bool) {
 			fmt.Printf("%04x\t", memory[i])
 		}
 	}
-	regs = [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	pc = 0x200
 	index = 0
 	stack = coll.New()
@@ -84,6 +84,16 @@ func runRom() {
 
 func execute(ins instruction) {
 	switch ins.opCode {
+	case 0:
+		if ins.x == 0 && ins.y == 0xe && ins.n == 0 {
+			for i := 0; i < 32; i++ {
+				for j := 0; j < 64; j++ {
+					screen[i][j] = false
+				}
+			}
+			break
+		}
+		break
 	case 1:
 		pc = int(ins.nnn)
 		break
