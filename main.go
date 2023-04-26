@@ -11,17 +11,18 @@ import (
 var (
 	memory [4096]byte
 	pc     int
-	index  int
-	regs   [16]int
+	index  int16
+	regs   [16]byte
 	stack  *coll.Stack
 )
 
 type instruction struct {
-	x   byte
-	y   byte
-	n   byte
-	nn  byte
-	nnn int
+	opCode byte
+	x      byte
+	y      byte
+	n      byte
+	nn     byte
+	nnn    int16
 }
 
 var FONT []byte = []byte{
@@ -56,7 +57,7 @@ func initializeMemory(debug bool) {
 			fmt.Printf("%04x\t", memory[i])
 		}
 	}
-	regs = [16]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	regs = [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	pc = 0x200
 	index = 0
 	stack = coll.New()
@@ -66,17 +67,37 @@ func runRom() {
 	for true {
 		ins := memory[pc : pc+2]
 		pc += 2
+		opCode := (ins[0] >> 4) & 0xff
 		x := ins[0] & 0xff
 		y := (ins[1] >> 4) & 0xff
 		n := ins[1] & 0xff
 		nn := ins[1]
-		nnn := (int((ins[1]>>4)&0xff) << 12) | int(ins[1])
-		insArg := instruction{x, y, n, nn, nnn}
-		fmt.Printf("%x %x %x %x %x", insArg.x, insArg.y, insArg.n, insArg.nn, insArg.nnn)
+		nnn := (int16((ins[1]>>4)&0xff) << 12) | int16(ins[1])
+		insArg := instruction{opCode, x, y, n, nn, nnn}
+		execute(insArg)
 		// short delay, simulate tick
 		time.Sleep(1 / 700 * time.Second)
 		// break early for temp debugging
 		os.Exit(0)
+	}
+}
+
+func execute(ins instruction) {
+	switch ins.opCode {
+	case 1:
+		pc = int(ins.nnn)
+		break
+	case 6:
+		regs[ins.x] = ins.nn
+		break
+	case 7:
+		regs[ins.x] += ins.nn
+		break
+	case 0xa:
+		index = int16(ins.nnn)
+		break
+	default:
+		break
 	}
 }
 
