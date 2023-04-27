@@ -91,8 +91,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Printf("%x [INS]", ins)
 		log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)
 		m = execute(m, insArg)
-		// break early for temp debugging
-		// return m, tea.Quit
 		return m, doTick()
 	default:
 		return m, doTick()
@@ -148,7 +146,7 @@ func drawScreen(m *model, ins instruction) {
 	turnedOff := false
 	for i = 0; i < int16(ins.n)&0xff; i++ {
 		for j = 0; j < 8; j++ {
-			bit := (m.memory[m.index+i] >> (8 - j)) & 0x1
+			bit := (m.memory[m.index+i] >> (8 - j - 1)) & 0x1
 			if bit == 0 || y+i > 32 || x+j > 64 {
 				continue
 			}
