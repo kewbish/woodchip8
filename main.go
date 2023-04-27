@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -48,7 +49,7 @@ var FONT []byte = []byte{
 }
 
 func initializeMemory(debug bool) model {
-	data, error := os.ReadFile("chip8-test.ch8")
+	data, error := os.ReadFile("roms/ibm-logo.ch8")
 	if error != nil {
 		panic(error)
 	}
@@ -67,26 +68,43 @@ func initializeMemory(debug bool) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return doTick()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	ins := m.memory[m.pc : m.pc+2]
-	m.pc += 2
-	opCode := (ins[0] >> 4) & 0xff
-	x := ins[0] & 0xff
-	y := (ins[1] >> 4) & 0xff
-	n := ins[1] & 0xff
-	nn := ins[1]
-	nnn := (int16((ins[1]>>4)&0xff) << 12) | int16(ins[1])
-	insArg := instruction{opCode, x, y, n, nn, nnn}
-	m = execute(m, insArg)
-	// short delay, simulate tick
-	// TODO: this is currently broken with bubbletea
-	time.Sleep(1 / 700 * time.Second)
-	// break early for temp debugging
-	os.Exit(0)
-	return m, nil
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+		return m, doTick()
+	case TickMsg:
+		ins := m.memory[m.pc : m.pc+2]
+		m.pc += 2
+		opCode := (ins[0] >> 4) & 0xff
+		x := ins[0] & 0xf
+		y := (ins[1] >> 4) & 0xf
+		n := ins[1] & 0xf
+		nn := ins[1]
+		nnn := ((int16(ins[0]) << 8) | int16(ins[1])) & 0xfff
+		insArg := instruction{opCode, x, y, n, nn, nnn}
+		log.Printf("%x [INS]", ins)
+		log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)
+		m = execute(m, insArg)
+		// break early for temp debugging
+		// return m, tea.Quit
+		return m, doTick()
+	default:
+		return m, doTick()
+	}
+}
+
+type TickMsg time.Time
+
+func doTick() tea.Cmd {
+	return tea.Tick(1/700*time.Second, func(t time.Time) tea.Msg {
+		return TickMsg(t)
+	})
 }
 
 func execute(m model, ins instruction) model {
@@ -111,12 +129,40 @@ func execute(m model, ins instruction) model {
 		m.regs[ins.x] += ins.nn
 		break
 	case 0xa:
-		m.index = int16(ins.nnn)
+		m.index = int16(ins.nnn) & 0xfff
+		break
+	case 0xd:
+		drawScreen(&m, ins)
 		break
 	default:
 		break
 	}
 	return m
+}
+
+func drawScreen(m *model, ins instruction) {
+	x := int16(m.regs[ins.x] % 64)
+	y := int16(m.regs[ins.y] % 32)
+	var i int16
+	var j int16
+	turnedOff := false
+	for i = 0; i < int16(ins.n)&0xff; i++ {
+		for j = 0; j < 8; j++ {
+			bit := (m.memory[m.index+i] >> (8 - j)) & 0x1
+			if bit == 0 || y+i > 32 || x+j > 64 {
+				continue
+			}
+			if m.screen[y+i][x+j] {
+				turnedOff = true
+			}
+			m.screen[y+i][x+j] = !m.screen[y+i][x+j]
+		}
+	}
+	if turnedOff {
+		m.regs[0xf] = 1
+	} else {
+		m.regs[0xf] = 0
+	}
 }
 
 func (m model) View() string {
@@ -135,6 +181,9 @@ func (m model) View() string {
 }
 
 func main() {
+	os.Remove("debug.log")
+	f, _ := tea.LogToFile("debug.log", "debug")
+	defer f.Close()
 	p := tea.NewProgram(initializeMemory(false))
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error: %v", err)
