@@ -147,6 +147,9 @@ func execute(m model, ins instruction) model {
 	case 7:
 		m.regs[ins.x] += ins.nn
 		break
+	case 8:
+		alu(&m, ins)
+		break
 	case 9:
 		if m.regs[ins.x] != m.regs[ins.y] {
 			m.pc += 2
@@ -162,6 +165,57 @@ func execute(m model, ins instruction) model {
 		break
 	}
 	return m
+}
+
+func alu(m *model, ins instruction) {
+	switch ins.n {
+	case 0:
+		m.regs[ins.x] = m.regs[ins.y]
+		break
+	case 1:
+		m.regs[ins.x] |= m.regs[ins.y]
+		break
+	case 2:
+		m.regs[ins.x] &= m.regs[ins.y]
+		break
+	case 3:
+		m.regs[ins.x] ^= m.regs[ins.y]
+		break
+	case 4:
+		if int(m.regs[ins.x])+int(m.regs[ins.y]) > 255 {
+			m.regs[0xf] = 1
+		} else {
+			m.regs[0xf] = 0
+		}
+		m.regs[ins.x] += m.regs[ins.y]
+		break
+	case 5:
+		if m.regs[ins.x] > m.regs[ins.y] {
+			m.regs[0xf] = 1
+		} else {
+			m.regs[0xf] = 0
+		}
+		m.regs[ins.x] -= m.regs[ins.y]
+		break
+	case 6:
+		m.regs[ins.x] = m.regs[ins.y]
+		m.regs[0xf] = m.regs[ins.y] & 1
+		m.regs[ins.x] >>= 1
+		break
+	case 8:
+		if m.regs[ins.y] > m.regs[ins.x] {
+			m.regs[0xf] = 1
+		} else {
+			m.regs[0xf] = 0
+		}
+		m.regs[ins.x] = m.regs[ins.y] - m.regs[ins.x]
+		break
+	case 9:
+		m.regs[ins.x] = m.regs[ins.y]
+		m.regs[0xf] = m.regs[ins.y] & (1 << 7)
+		m.regs[ins.x] <<= 1
+		break
+	}
 }
 
 func drawScreen(m *model, ins instruction) {
