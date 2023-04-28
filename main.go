@@ -115,11 +115,16 @@ func execute(m model, ins instruction) model {
 				}
 			}
 			break
+		} else if ins.x == 0 && ins.y == 0xe && ins.n == 0xe {
+			m.pc = m.stack.Pop().(int)
 		}
 		break
 	case 1:
 		m.pc = int(ins.nnn)
 		break
+	case 2:
+		m.stack.Push(m.pc)
+		m.pc = int(ins.nnn)
 	case 6:
 		m.regs[ins.x] = ins.nn
 		break
