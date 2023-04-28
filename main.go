@@ -125,11 +125,32 @@ func execute(m model, ins instruction) model {
 	case 2:
 		m.stack.Push(m.pc)
 		m.pc = int(ins.nnn)
+		break
+	case 3:
+		if m.regs[ins.x] == ins.nn {
+			m.pc += 2
+		}
+		break
+	case 4:
+		if m.regs[ins.x] != ins.nn {
+			m.pc += 2
+		}
+		break
+	case 5:
+		if m.regs[ins.x] == m.regs[ins.y] {
+			m.pc += 2
+		}
+		break
 	case 6:
 		m.regs[ins.x] = ins.nn
 		break
 	case 7:
 		m.regs[ins.x] += ins.nn
+		break
+	case 9:
+		if m.regs[ins.x] != m.regs[ins.y] {
+			m.pc += 2
+		}
 		break
 	case 0xa:
 		m.index = int16(ins.nnn) & 0xfff
