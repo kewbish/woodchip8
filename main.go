@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"time"
 
@@ -157,6 +158,12 @@ func execute(m model, ins instruction) model {
 		break
 	case 0xa:
 		m.index = int16(ins.nnn) & 0xfff
+		break
+	case 0xb:
+		m.pc = int(ins.nnn) + int(m.regs[0])
+		break
+	case 0xc:
+		m.regs[ins.x] = byte(rand.Intn(256)) & ins.nn
 		break
 	case 0xd:
 		drawScreen(&m, ins)
