@@ -12,13 +12,17 @@ import (
 )
 
 type model struct {
-	memory [4096]byte
-	pc     int
-	index  int16
-	regs   [16]byte
-	stack  *coll.Stack
-	screen [32][64]bool
+	memory     [4096]byte
+	pc         int
+	index      int16
+	regs       [16]byte
+	stack      *coll.Stack
+	screen     [32][64]bool
+	delayTimer byte
+	soundTimer byte
 }
+
+var timerTicker *time.Ticker
 
 type instruction struct {
 	opCode byte
@@ -60,6 +64,8 @@ func initializeMemory(debug bool) model {
 	new_memory.stack = coll.New()
 	copy(new_memory.memory[0x200:], data)
 	copy(new_memory.memory[0x50:0x9F], FONT)
+	new_memory.delayTimer = 0
+	new_memory.soundTimer = 0
 	if debug {
 		for i := 0; i < len(new_memory.memory); i++ {
 			fmt.Printf("%04x\t", new_memory.memory[i])
@@ -76,7 +82,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
+			timerTicker.Stop()
 			return m, tea.Quit
+		}
+		return m, doTick()
+	case TimerTickMsg:
+		if m.delayTimer > 0 {
+			m.delayTimer -= 1
+		}
+		if m.soundTimer > 0 {
+			m.soundTimer -= 1
 		}
 		return m, doTick()
 	case TickMsg:
@@ -98,7 +113,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-type TickMsg time.Time
+type (
+	TickMsg      time.Time
+	TimerTickMsg struct{}
+)
 
 func doTick() tea.Cmd {
 	return tea.Tick(1/700*time.Second, func(t time.Time) tea.Msg {
@@ -255,9 +273,9 @@ func (m model) View() string {
 	for _, line := range m.screen {
 		for _, col := range line {
 			if col {
-				s += "█"
+				s += "██"
 			} else {
-				s += " "
+				s += "  "
 			}
 		}
 		s += "\n"
@@ -269,7 +287,17 @@ func main() {
 	os.Remove("debug.log")
 	f, _ := tea.LogToFile("debug.log", "debug")
 	defer f.Close()
+	timerTicker = time.NewTicker(time.Second / 60)
 	p := tea.NewProgram(initializeMemory(false))
+	go func() {
+		for {
+			select {
+			case t := <-timerTicker.C:
+				log.Printf("%d [TICK]", t)
+				p.Send(TimerTickMsg{})
+			}
+		}
+	}()
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error: %v", err)
 		os.Exit(1)
