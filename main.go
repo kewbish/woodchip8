@@ -65,7 +65,7 @@ var (
 )
 
 func initializeMemory(debug bool) model {
-	data, error := os.ReadFile("roms/ibm-logo.ch8")
+	data, error := os.ReadFile("roms/chip8-test.ch8")
 	if error != nil {
 		panic(error)
 	}
@@ -241,6 +241,18 @@ func execute(m model, ins instruction) model {
 			m.memory[m.index+1] = number / 10
 			m.memory[m.index+2] = number % 10
 			break
+		case 0x55:
+			var i byte
+			for i = 0; i < ins.x; i++ {
+				m.memory[m.index+int16(i)] = m.regs[i]
+			}
+			break
+		case 0x65:
+			var i byte
+			for i = 0; i < ins.x; i++ {
+				m.regs[i] = m.memory[m.index+int16(i)]
+			}
+			break
 		}
 	default:
 		break
@@ -283,7 +295,7 @@ func alu(m *model, ins instruction) {
 		m.regs[0xf] = m.regs[ins.y] & 1
 		m.regs[ins.x] >>= 1
 		break
-	case 8:
+	case 7:
 		if m.regs[ins.y] > m.regs[ins.x] {
 			m.regs[0xf] = 1
 		} else {
@@ -291,7 +303,7 @@ func alu(m *model, ins instruction) {
 		}
 		m.regs[ins.x] = m.regs[ins.y] - m.regs[ins.x]
 		break
-	case 9:
+	case 0xe:
 		m.regs[ins.x] = m.regs[ins.y]
 		m.regs[0xf] = m.regs[ins.y] & (1 << 7)
 		m.regs[ins.x] <<= 1
