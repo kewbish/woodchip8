@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	beep "github.com/gen2brain/beeep"
 	coll "github.com/golang-collections/collections/stack"
 )
 
@@ -125,6 +126,9 @@ func doTick() tea.Cmd {
 }
 
 func execute(m model, ins instruction) model {
+	if m.soundTimer > 0 {
+		beep.Beep(440, 1000/60)
+	}
 	switch ins.opCode {
 	case 0:
 		if ins.x == 0 && ins.y == 0xe && ins.n == 0 {
