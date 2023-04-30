@@ -14,14 +14,15 @@ import (
 )
 
 type model struct {
-	memory     [4096]byte
-	pc         int
-	index      int16
-	regs       [16]byte
-	stack      *coll.Stack
-	screen     [32][64]bool
-	delayTimer byte
-	soundTimer byte
+	memory        [4096]byte
+	pc            int
+	index         int16
+	regs          [16]byte
+	stack         *coll.Stack
+	screen        [32][64]bool
+	delayTimer    byte
+	soundTimer    byte
+	waitingForKey byte
 }
 
 var (
@@ -58,7 +59,10 @@ var FONT []byte = []byte{
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
 
-var KEYMAP map[byte]keyboard.Key = map[byte]keyboard.Key{0: keyboard.One, 1: keyboard.Two, 2: keyboard.Three, 3: keyboard.Four, 4: keyboard.Q, 5: keyboard.W, 6: keyboard.E, 7: keyboard.R, 8: keyboard.A, 9: keyboard.S, 0xa: keyboard.D, 0xb: keyboard.F, 0xc: keyboard.Z, 0xd: keyboard.X, 0xe: keyboard.C, 0xf: keyboard.V}
+var (
+	KEYMAP map[byte]keyboard.Key = map[byte]keyboard.Key{0: keyboard.One, 1: keyboard.Two, 2: keyboard.Three, 3: keyboard.Four, 4: keyboard.Q, 5: keyboard.W, 6: keyboard.E, 7: keyboard.R, 8: keyboard.A, 9: keyboard.S, 0xa: keyboard.D, 0xb: keyboard.F, 0xc: keyboard.Z, 0xd: keyboard.X, 0xe: keyboard.C, 0xf: keyboard.V}
+	STRMAP map[string]byte       = map[string]byte{"0": 0, "1": 1, "2": 2, "3": 3, "q": 4, "w": 5, "e": 6, "r": 7, "a": 8, "s": 9, "d": 0xa, "f": 0xb, "z": 0xc, "x": 0xd, "c": 0xe, "v": 0xf}
+)
 
 func initializeMemory(debug bool) model {
 	data, error := os.ReadFile("roms/ibm-logo.ch8")
@@ -73,6 +77,7 @@ func initializeMemory(debug bool) model {
 	copy(new_memory.memory[0x50:0x9F], FONT)
 	new_memory.delayTimer = 0
 	new_memory.soundTimer = 0
+	new_memory.waitingForKey = 0x10
 	if debug {
 		for i := 0; i < len(new_memory.memory); i++ {
 			fmt.Printf("%04x\t", new_memory.memory[i])
@@ -91,6 +96,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			timerTicker.Stop()
 			return m, tea.Quit
+		}
+		byteval, ok := STRMAP[msg.String()]
+		if m.waitingForKey != 0x10 && ok {
+			m.regs[m.waitingForKey] = byteval
+			m.waitingForKey = 0x10
 		}
 		return m, doTick()
 	case TimerTickMsg:
@@ -217,6 +227,10 @@ func execute(m model, ins instruction) model {
 			break
 		case 0x1e:
 			m.index += int16(m.regs[ins.x])
+			break
+		case 0x0a:
+			m.waitingForKey = ins.x
+			m.pc -= 2
 			break
 		}
 	default:
