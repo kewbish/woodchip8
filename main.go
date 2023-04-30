@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"azul3d.org/engine/keyboard"
 	tea "github.com/charmbracelet/bubbletea"
 	beep "github.com/gen2brain/beeep"
 	coll "github.com/golang-collections/collections/stack"
@@ -23,7 +24,10 @@ type model struct {
 	soundTimer byte
 }
 
-var timerTicker *time.Ticker
+var (
+	timerTicker *time.Ticker
+	watcher     *keyboard.Watcher
+)
 
 type instruction struct {
 	opCode byte
@@ -53,6 +57,8 @@ var FONT []byte = []byte{
 	0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
+
+var KEYMAP map[byte]keyboard.Key = map[byte]keyboard.Key{0: keyboard.One, 1: keyboard.Two, 2: keyboard.Three, 3: keyboard.Four, 4: keyboard.Q, 5: keyboard.W, 6: keyboard.E, 7: keyboard.R, 8: keyboard.A, 9: keyboard.S, 0xa: keyboard.D, 0xb: keyboard.F, 0xc: keyboard.Z, 0xd: keyboard.X, 0xe: keyboard.C, 0xf: keyboard.V}
 
 func initializeMemory(debug bool) model {
 	data, error := os.ReadFile("roms/ibm-logo.ch8")
@@ -190,6 +196,14 @@ func execute(m model, ins instruction) model {
 	case 0xd:
 		drawScreen(&m, ins)
 		break
+	case 0xe:
+		if m.regs[ins.x] < 0 || m.regs[ins.x] > 0xf {
+			break
+		}
+		if (ins.nn == 0x9e && watcher.Down(KEYMAP[m.regs[ins.x]])) || (ins.nn == 0xa1 && watcher.Up(KEYMAP[m.regs[ins.x]])) {
+			m.pc += 2
+		}
+		break
 	case 0xf:
 		switch ins.nn {
 		case 0x07:
@@ -307,6 +321,7 @@ func main() {
 	f, _ := tea.LogToFile("debug.log", "debug")
 	defer f.Close()
 	timerTicker = time.NewTicker(time.Second / 60)
+	watcher = keyboard.NewWatcher()
 	p := tea.NewProgram(initializeMemory(false))
 	go func() {
 		for {

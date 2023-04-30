@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	azul3d.org/engine v0.0.0-20211024043305-793ea6c2839d // indirect
 	github.com/aymanbagabas/go-osc52 v1.2.1 // indirect
 	github.com/containerd/console v1.0.3 // indirect
 	github.com/gen2brain/beeep v0.0.0-20230307103607-6e717729cb4f // indirect
