@@ -186,6 +186,21 @@ func execute(m model, ins instruction) model {
 	case 0xd:
 		drawScreen(&m, ins)
 		break
+	case 0xf:
+		switch ins.nn {
+		case 0x07:
+			m.regs[ins.x] = m.delayTimer
+			break
+		case 0x15:
+			m.delayTimer = m.regs[ins.x]
+			break
+		case 0x18:
+			m.soundTimer = m.regs[ins.x]
+			break
+		case 0x1e:
+			m.index += int16(m.regs[ins.x])
+			break
+		}
 	default:
 		break
 	}
