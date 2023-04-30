@@ -232,6 +232,15 @@ func execute(m model, ins instruction) model {
 			m.waitingForKey = ins.x
 			m.pc -= 2
 			break
+		case 0x29:
+			m.index = int16(0x50+5*(m.regs[ins.x]&0xf)) & 0xff
+			break
+		case 0x33:
+			number := m.regs[ins.x]
+			m.memory[m.index] = number / 100
+			m.memory[m.index+1] = number / 10
+			m.memory[m.index+2] = number % 10
+			break
 		}
 	default:
 		break
