@@ -95,6 +95,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			timerTicker.Stop()
+			for i := 0; i < 16; i++ {
+				log.Printf("%x:%x [ENDREG]", i, m.regs[i])
+				log.Printf("%x %x %x  [ENDREG]", m.memory[m.index], m.memory[m.index+1], m.memory[m.index+2])
+			}
 			return m, tea.Quit
 		}
 		byteval, ok := STRMAP[msg.String()]
@@ -238,18 +242,18 @@ func execute(m model, ins instruction) model {
 		case 0x33:
 			number := m.regs[ins.x]
 			m.memory[m.index] = number / 100
-			m.memory[m.index+1] = number / 10
+			m.memory[m.index+1] = (number % 100) / 10
 			m.memory[m.index+2] = number % 10
 			break
 		case 0x55:
 			var i byte
-			for i = 0; i < ins.x; i++ {
+			for i = 0; i <= ins.x; i++ {
 				m.memory[m.index+int16(i)] = m.regs[i]
 			}
 			break
 		case 0x65:
 			var i byte
-			for i = 0; i < ins.x; i++ {
+			for i = 0; i <= ins.x; i++ {
 				m.regs[i] = m.memory[m.index+int16(i)]
 			}
 			break
