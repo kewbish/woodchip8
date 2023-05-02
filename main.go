@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"azul3d.org/engine/keyboard"
+	"github.com/MarinX/keylogger"
 	tea "github.com/charmbracelet/bubbletea"
 	beep "github.com/gen2brain/beeep"
 	coll "github.com/golang-collections/collections/stack"
@@ -27,7 +27,9 @@ type model struct {
 
 var (
 	timerTicker *time.Ticker
-	watcher     *keyboard.Watcher
+	logger      *keylogger.KeyLogger
+	logEvents   chan keylogger.InputEvent
+	keys        [16]bool
 )
 
 type instruction struct {
@@ -59,13 +61,16 @@ var FONT []byte = []byte{
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
 
-var (
-	KEYMAP map[byte]keyboard.Key = map[byte]keyboard.Key{0: keyboard.One, 1: keyboard.Two, 2: keyboard.Three, 3: keyboard.Four, 4: keyboard.Q, 5: keyboard.W, 6: keyboard.E, 7: keyboard.R, 8: keyboard.A, 9: keyboard.S, 0xa: keyboard.D, 0xb: keyboard.F, 0xc: keyboard.Z, 0xd: keyboard.X, 0xe: keyboard.C, 0xf: keyboard.V}
-	STRMAP map[string]byte       = map[string]byte{"0": 0, "1": 1, "2": 2, "3": 3, "q": 4, "w": 5, "e": 6, "r": 7, "a": 8, "s": 9, "d": 0xa, "f": 0xb, "z": 0xc, "x": 0xd, "c": 0xe, "v": 0xf}
-)
+var STRMAP map[string]byte = map[string]byte{"0": 0, "1": 1, "2": 2, "3": 3, "Q": 4, "W": 5, "E": 6, "R": 7, "A": 8, "S": 9, "D": 0xa, "F": 0xb, "Z": 0xc, "X": 0xd, "C": 0xe, "V": 0xf}
 
 func initializeMemory(debug bool) model {
-	data, error := os.ReadFile("roms/chip8-test.ch8")
+	var path string
+	if len(os.Args) > 1 {
+		path = os.Args[1]
+	} else {
+		path = "roms/chip8-test.ch8"
+	}
+	data, error := os.ReadFile(path)
 	if error != nil {
 		panic(error)
 	}
@@ -95,16 +100,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			timerTicker.Stop()
-			for i := 0; i < 16; i++ {
+			/*for i := 0; i < 16; i++ {
 				log.Printf("%x:%x [ENDREG]", i, m.regs[i])
 				log.Printf("%x %x %x  [ENDREG]", m.memory[m.index], m.memory[m.index+1], m.memory[m.index+2])
-			}
+			}*/
+			defer logger.Close()
+			defer close(logEvents)
 			return m, tea.Quit
 		}
 		byteval, ok := STRMAP[msg.String()]
+		log.Printf("%x %x [KEY]", m.waitingForKey, byteval)
 		if m.waitingForKey != 0x10 && ok {
 			m.regs[m.waitingForKey] = byteval
 			m.waitingForKey = 0x10
+			m.pc += 2
 		}
 		return m, doTick()
 	case TimerTickMsg:
@@ -125,8 +134,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		nn := ins[1]
 		nnn := ((int16(ins[0]) << 8) | int16(ins[1])) & 0xfff
 		insArg := instruction{opCode, x, y, n, nn, nnn}
-		log.Printf("%x [INS]", ins)
-		log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)
+		/*log.Printf("%x [INS]", ins)
+		log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)*/
 		m = execute(m, insArg)
 		return m, doTick()
 	default:
@@ -159,7 +168,10 @@ func execute(m model, ins instruction) model {
 			}
 			break
 		} else if ins.x == 0 && ins.y == 0xe && ins.n == 0xe {
-			m.pc = m.stack.Pop().(int)
+			res := m.stack.Pop()
+			if res != nil {
+				m.pc = res.(int)
+			}
 		}
 		break
 	case 1:
@@ -214,7 +226,7 @@ func execute(m model, ins instruction) model {
 		if m.regs[ins.x] < 0 || m.regs[ins.x] > 0xf {
 			break
 		}
-		if (ins.nn == 0x9e && watcher.Down(KEYMAP[m.regs[ins.x]])) || (ins.nn == 0xa1 && watcher.Up(KEYMAP[m.regs[ins.x]])) {
+		if (ins.nn == 0x9e && keys[ins.x]) || (ins.nn == 0xa1 && keys[ins.x]) {
 			m.pc += 2
 		}
 		break
@@ -279,38 +291,46 @@ func alu(m *model, ins instruction) {
 		m.regs[ins.x] ^= m.regs[ins.y]
 		break
 	case 4:
-		if int(m.regs[ins.x])+int(m.regs[ins.y]) > 255 {
+		oldX := m.regs[ins.x]
+		oldY := m.regs[ins.y]
+		m.regs[ins.x] += m.regs[ins.y]
+		if int(oldX)+int(oldY) > 255 {
 			m.regs[0xf] = 1
 		} else {
 			m.regs[0xf] = 0
 		}
-		m.regs[ins.x] += m.regs[ins.y]
 		break
 	case 5:
-		if m.regs[ins.x] > m.regs[ins.y] {
+		oldX := m.regs[ins.x]
+		oldY := m.regs[ins.y]
+		m.regs[ins.x] -= m.regs[ins.y]
+		if oldX > oldY {
 			m.regs[0xf] = 1
 		} else {
 			m.regs[0xf] = 0
 		}
-		m.regs[ins.x] -= m.regs[ins.y]
 		break
 	case 6:
-		m.regs[ins.x] = m.regs[ins.y]
-		m.regs[0xf] = m.regs[ins.y] & 1
+		oldY := m.regs[ins.y]
+		m.regs[ins.x] = oldY
 		m.regs[ins.x] >>= 1
+		m.regs[0xf] = oldY & 1
 		break
 	case 7:
-		if m.regs[ins.y] > m.regs[ins.x] {
+		oldX := m.regs[ins.x]
+		oldY := m.regs[ins.y]
+		m.regs[ins.x] = m.regs[ins.y] - m.regs[ins.x]
+		if oldY > oldX {
 			m.regs[0xf] = 1
 		} else {
 			m.regs[0xf] = 0
 		}
-		m.regs[ins.x] = m.regs[ins.y] - m.regs[ins.x]
 		break
 	case 0xe:
-		m.regs[ins.x] = m.regs[ins.y]
-		m.regs[0xf] = m.regs[ins.y] & (1 << 7)
+		oldY := m.regs[ins.y]
+		m.regs[ins.x] = oldY
 		m.regs[ins.x] <<= 1
+		m.regs[0xf] = (oldY >> 7)
 		break
 	}
 }
@@ -360,19 +380,35 @@ func main() {
 	f, _ := tea.LogToFile("debug.log", "debug")
 	defer f.Close()
 	timerTicker = time.NewTicker(time.Second / 60)
-	watcher = keyboard.NewWatcher()
+	logger, _ = keylogger.New("/dev/input/event18")
+	logEvents = logger.Read()
+	go func() {
+		for e := range logEvents {
+			switch e.Type {
+			case keylogger.EvKey:
+				if e.KeyPress() {
+					log.Printf("%s [KEYPRESS]", e.KeyString())
+					keys[STRMAP[e.KeyString()]] = true
+				}
+				if e.KeyRelease() {
+					keys[STRMAP[e.KeyString()]] = false
+				}
+				break
+			}
+		}
+	}()
 	p := tea.NewProgram(initializeMemory(false))
 	go func() {
 		for {
 			select {
-			case t := <-timerTicker.C:
-				log.Printf("%d [TICK]", t)
+			case <-timerTicker.C:
+				// log.Printf("%d [TICK]", t)
 				p.Send(TimerTickMsg{})
 			}
 		}
 	}()
 	if _, err := p.Run(); err != nil {
-		fmt.Printf("Error: %v", err)
+		log.Printf("Error: %v", err)
 		os.Exit(1)
 	}
 }
