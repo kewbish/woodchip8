@@ -7,30 +7,25 @@ import (
 	"os"
 	"time"
 
-	"github.com/MarinX/keylogger"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/eiannone/keyboard"
 	beep "github.com/gen2brain/beeep"
 	coll "github.com/golang-collections/collections/stack"
 )
 
 type model struct {
-	memory        [4096]byte
-	pc            int
-	index         int16
-	regs          [16]byte
-	stack         *coll.Stack
-	screen        [32][64]bool
-	delayTimer    byte
-	soundTimer    byte
-	waitingForKey byte
+	memory     [4096]byte
+	pc         int
+	index      int16
+	regs       [16]byte
+	stack      *coll.Stack
+	screen     [32][64]bool
+	delayTimer byte
+	soundTimer byte
+	shouldQuit bool
 }
 
-var (
-	timerTicker *time.Ticker
-	logger      *keylogger.KeyLogger
-	logEvents   chan keylogger.InputEvent
-	keys        [16]int
-)
+var timerTicker *time.Ticker
 
 type instruction struct {
 	opCode byte
@@ -61,7 +56,10 @@ var FONT []byte = []byte{
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
 
-var STRMAP map[string]byte = map[string]byte{"1": 0, "2": 1, "3": 2, "4": 3, "Q": 4, "W": 5, "E": 6, "R": 7, "A": 8, "S": 9, "D": 0xa, "F": 0xb, "Z": 0xc, "X": 0xd, "C": 0xe, "V": 0xf}
+var (
+	STRMAP map[rune]byte   = map[rune]byte{'1': 0, '2': 1, '3': 2, '4': 3, 'q': 4, 'w': 5, 'e': 6, 'r': 7, 'a': 8, 's': 9, 'd': 0xa, 'f': 0xb, 'z': 0xc, 'x': 0xd, 'c': 0xe, 'v': 0xf}
+	INTMAP map[byte]string = map[byte]string{0: "1", 1: "2", 2: "3", 3: "4", 4: "q", 5: "w", 6: "e", 7: "r", 8: "a", 9: "s", 0xa: "d", 0xb: "f", 0xc: "z", 0xd: "x", 0xe: "c", 0xf: "v"}
+)
 
 func initializeMemory(debug bool) model {
 	var path string
@@ -82,7 +80,7 @@ func initializeMemory(debug bool) model {
 	copy(new_memory.memory[0x50:0x9F], FONT)
 	new_memory.delayTimer = 0
 	new_memory.soundTimer = 0
-	new_memory.waitingForKey = 0x10
+	new_memory.shouldQuit = false
 	if debug {
 		for i := 0; i < len(new_memory.memory); i++ {
 			fmt.Printf("%04x\t", new_memory.memory[i])
@@ -96,27 +94,14 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.shouldQuit {
+		return m, tea.Quit
+	}
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			timerTicker.Stop()
-			/*for i := 0; i < 16; i++ {
-				log.Printf("%x:%x [ENDREG]", i, m.regs[i])
-				log.Printf("%x %x %x  [ENDREG]", m.memory[m.index], m.memory[m.index+1], m.memory[m.index+2])
-			}
-			logger.Close()
-			close(logEvents)*/
 			return m, tea.Quit
-		}
-		byteval, ok := STRMAP[msg.String()]
-		log.Printf("%x %x %v [KEY]", m.waitingForKey, byteval, keys)
-		if ok {
-			keys[byteval] = 5
-			log.Printf("%v [SETKEY]", keys)
-			if m.waitingForKey != 0x10 {
-				m.regs[m.waitingForKey] = byteval
-				m.waitingForKey = 0x10
-			}
 		}
 		return m, doTick()
 	case TimerTickMsg:
@@ -127,13 +112,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.soundTimer -= 1
 		}
 		return m, doTick()
-	/*case KeypressMsg:
-	m.keys[msg.key] = msg.direction
-	return m, doTick()*/
 	case TickMsg:
-		if m.waitingForKey != 0x10 {
-			return m, doTick()
-		}
 		ins := m.memory[m.pc : m.pc+2]
 		m.pc += 2
 		opCode := (ins[0] >> 4) & 0xff
@@ -146,12 +125,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Printf("%x [INS]", ins)
 		log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)
 		m = execute(m, insArg)
-		for i := range keys {
-			if keys[i] > 0 {
-				keys[i]--
-			}
-		}
-		log.Printf("%v", keys)
 		return m, doTick()
 	default:
 		return m, doTick()
@@ -245,7 +218,23 @@ func execute(m model, ins instruction) model {
 		if m.regs[ins.x] < 0 || m.regs[ins.x] > 0xf {
 			break
 		}
-		if (ins.nn == 0x9e && keys[m.regs[ins.x]] != 0) || (ins.nn == 0xa1 && keys[m.regs[ins.x]] == 0) {
+		channel := make(chan rune, 1)
+		go func() {
+			ch, _, _ := keyboard.GetSingleKey()
+			channel <- ch
+		}()
+		var result string
+		select {
+		case res := <-channel:
+			if res == rune(keyboard.KeyCtrlC) {
+				m.shouldQuit = true
+			}
+			result = string(res)
+		case <-time.After(time.Second / 60):
+			result = ""
+		}
+		log.Printf("%s [SKIP]", result)
+		if (ins.nn == 0x9e && result == INTMAP[m.regs[ins.x]]) || (ins.nn == 0xa1 && result == "") {
 			m.pc += 2
 		}
 		break
@@ -264,8 +253,15 @@ func execute(m model, ins instruction) model {
 			m.index += int16(m.regs[ins.x])
 			break
 		case 0x0a:
-			log.Printf("[WAITING FOR KEY]")
-			m.waitingForKey = ins.x
+			char, _, _ := keyboard.GetSingleKey()
+			if char == rune(keyboard.KeyCtrlC) {
+				m.shouldQuit = true
+			}
+			log.Printf("%x [WAITINGFORKEY]", char)
+			val, ok := STRMAP[char]
+			if ok {
+				m.regs[ins.x] = val
+			}
 			break
 		case 0x29:
 			m.index = int16(0x50+5*(m.regs[ins.x]&0xf)) & 0xff
@@ -399,34 +395,15 @@ func main() {
 	f, _ := tea.LogToFile("debug.log", "debug")
 	defer f.Close()
 	timerTicker = time.NewTicker(time.Second / 60)
-	/*logger, _ = keylogger.New("/dev/input/event18")
-	logEvents = logger.Read()*/
 	p := tea.NewProgram(initializeMemory(false))
 	go func() {
 		for {
 			select {
 			case <-timerTicker.C:
-				// log.Printf("%d [TICK]", t)
 				p.Send(TimerTickMsg{})
 			}
 		}
 	}()
-	/*go func() {
-		for e := range logEvents {
-			switch e.Type {
-			case keylogger.EvKey:
-				if e.KeyPress() {
-					log.Printf("%s [KEYPRESS]", e.KeyString())
-					p.Send(KeypressMsg{STRMAP[e.KeyString()], true})
-				}
-				if e.KeyRelease() {
-					log.Printf("%s [KEYRELEASE]", e.KeyString())
-					p.Send(KeypressMsg{STRMAP[e.KeyString()], false})
-				}
-				break
-			}
-		}
-	}()*/
 	if _, err := p.Run(); err != nil {
 		log.Printf("Error: %v", err)
 		os.Exit(1)

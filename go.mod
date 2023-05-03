@@ -4,15 +4,14 @@ go 1.20
 
 require (
 	github.com/charmbracelet/bubbletea v0.23.2
+	github.com/eiannone/keyboard v0.0.0-20220611211555-0d226195f203
+	github.com/gen2brain/beeep v0.0.0-20230307103607-6e717729cb4f
 	github.com/golang-collections/collections v0.0.0-20130729185459-604e922904d3
 )
 
 require (
-	azul3d.org/engine v0.0.0-20211024043305-793ea6c2839d // indirect
-	github.com/MarinX/keylogger v0.0.0-20210528193429-a54d7834cc1a // indirect
 	github.com/aymanbagabas/go-osc52 v1.2.1 // indirect
 	github.com/containerd/console v1.0.3 // indirect
-	github.com/gen2brain/beeep v0.0.0-20230307103607-6e717729cb4f // indirect
 	github.com/go-toast/toast v0.0.0-20190211030409-01e6764cf0a4 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
