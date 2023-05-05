@@ -188,6 +188,9 @@ func initializeWorkerMemory(m model) {
 		}
 		defer resp.Body.Close()
 	}()
+	for i := 0; i < 8; i++ {
+		<-done
+	}
 }
 
 func (m model) Init() tea.Cmd {

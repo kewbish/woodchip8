@@ -49,6 +49,12 @@ export class Woodchip implements DurableObject {
             (json as { index: number })["index"]
           );
           break;
+        case "/resetRegs":
+          await this.state.storage.put(
+            "regs",
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+          );
+          break;
         case "/setReg":
           let newRegs = regs;
           newRegs[(json as { regIndex: number; value: number }).regIndex] = (
