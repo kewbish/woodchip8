@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
+	"net/http"
 	"os"
 	"time"
 
@@ -81,12 +84,110 @@ func initializeMemory(debug bool) model {
 	new_memory.delayTimer = 0
 	new_memory.soundTimer = 0
 	new_memory.shouldQuit = false
+	initializeWorkerMemory(new_memory)
 	if debug {
 		for i := 0; i < len(new_memory.memory); i++ {
 			fmt.Printf("%04x\t", new_memory.memory[i])
 		}
 	}
 	return new_memory
+}
+
+func initializeWorkerMemory(m model) {
+	done := make(chan bool, 8)
+	go func() {
+		postBody, _ := json.Marshal(map[string][]byte{"memory": m.memory[:]})
+		body := bytes.NewBuffer(postBody)
+		resp, err := http.Post("http://127.0.0.1:8787/setMemory", "application/json", body)
+		if err != nil {
+			log.Println("Could not set values to Worker...")
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		done <- true
+	}()
+	go func() {
+		postBody, _ := json.Marshal(map[string]int{"pc": m.pc})
+		body := bytes.NewBuffer(postBody)
+		resp, err := http.Post("http://127.0.0.1:8787/setPC", "application/json", body)
+		if err != nil {
+			log.Println("Could not set values to Worker...")
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		done <- true
+	}()
+	go func() {
+		postBody, _ := json.Marshal(map[string]int{"index": int(m.index) & 0xffff})
+		body := bytes.NewBuffer(postBody)
+		resp, err := http.Post("http://127.0.0.1:8787/setIndex", "application/json", body)
+		if err != nil {
+			log.Println("Could not set values to Worker...")
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		done <- true
+	}()
+	go func() {
+		postBody, _ := json.Marshal(map[string]string{})
+		body := bytes.NewBuffer(postBody)
+		resp, err := http.Post("http://127.0.0.1:8787/resetRegs", "application/json", body)
+		if err != nil {
+			log.Println("Could not set values to Worker...")
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		done <- true
+	}()
+	go func() {
+		var newStack *coll.Stack
+		*newStack = *m.stack
+		var values []int
+		for newStack.Len() != 0 {
+			values = append(values, newStack.Pop().(int))
+		}
+		postBody, _ := json.Marshal(map[string][]int{"stack": values})
+		body := bytes.NewBuffer(postBody)
+		resp, err := http.Post("http://127.0.0.1:8787/setStack", "application/json", body)
+		if err != nil {
+			log.Println("Could not set values to Worker...")
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		done <- true
+	}()
+	go func() {
+		postBody, _ := json.Marshal(map[string]int{"delayTimer": int(m.index) & 0xffff})
+		body := bytes.NewBuffer(postBody)
+		resp, err := http.Post("http://127.0.0.1:8787/setDelayTimer", "application/json", body)
+		if err != nil {
+			log.Println("Could not set values to Worker...")
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		done <- true
+	}()
+	go func() {
+		postBody, _ := json.Marshal(map[string]int{"soundTimer": int(m.index) & 0xffff})
+		body := bytes.NewBuffer(postBody)
+		resp, err := http.Post("http://127.0.0.1:8787/setSoundTimer", "application/json", body)
+		if err != nil {
+			log.Println("Could not set values to Worker...")
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		done <- true
+	}()
+	go func() {
+		postBody, _ := json.Marshal(map[string]bool{"shouldQuit": false})
+		body := bytes.NewBuffer(postBody)
+		resp, err := http.Post("http://127.0.0.1:8787/setShouldQuit", "application/json", body)
+		if err != nil {
+			log.Println("Could not set values to Worker...")
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+	}()
 }
 
 func (m model) Init() tea.Cmd {
