@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/eiannone/keyboard"
 	beep "github.com/gen2brain/beeep"
 	coll "github.com/golang-collections/collections/stack"
+	"github.com/rgamba/evtwebsocket"
 )
 
 type model struct {
@@ -29,6 +31,8 @@ type model struct {
 }
 
 var timerTicker *time.Ticker
+
+var websocket evtwebsocket.Conn
 
 type instruction struct {
 	opCode byte
@@ -188,6 +192,7 @@ func initializeWorkerMemory(m model) {
 		}
 		defer resp.Body.Close()
 	}()
+	close(done)
 	for i := 0; i < 8; i++ {
 		<-done
 	}
@@ -498,8 +503,21 @@ func main() {
 	os.Remove("debug.log")
 	f, _ := tea.LogToFile("debug.log", "debug")
 	defer f.Close()
-	timerTicker = time.NewTicker(time.Second / 60)
+	resp, err := http.Get("http://127.0.0.1:8787/newWoodchip")
+	if err != nil {
+		log.Println("Could not create worker room...")
+		os.Exit(1)
+	}
+	body, err := io.ReadAll(resp.Body)
+	defer resp.Body.Close()
+	if err != nil {
+		log.Println("Could not create worker room...")
+		os.Exit(1)
+	}
+	room := string(body)
+	log.Printf("%s [ROOM]", room)
 	p := tea.NewProgram(initializeMemory(false))
+	timerTicker = time.NewTicker(time.Second / 60)
 	go func() {
 		for {
 			select {
@@ -508,6 +526,17 @@ func main() {
 			}
 		}
 	}()
+	websocket = evtwebsocket.Conn{
+		OnConnected: func(w *evtwebsocket.Conn) {
+			fmt.Println("[WSCONNECTED]")
+		},
+		OnMessage: func(msg []byte, w *evtwebsocket.Conn) {
+		},
+		OnError: func(err error) {
+			log.Printf("WS error: %s [ERR]", err.Error())
+		},
+	}
+	websocket.Dial("ws://127.0.0.1:8787/websocket", "")
 	if _, err := p.Run(); err != nil {
 		log.Printf("Error: %v", err)
 		os.Exit(1)
