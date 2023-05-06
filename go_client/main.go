@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"time"
+	"unsafe"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/eiannone/keyboard"
@@ -33,7 +34,6 @@ type model struct {
 var (
 	timerTicker *time.Ticker
 	websocket   evtwebsocket.Conn
-	p           *tea.Program
 )
 
 type instruction struct {
@@ -84,7 +84,7 @@ func initializeMemory(debug bool) model {
 	new_memory := model{}
 	new_memory.pc = 0x200
 	new_memory.index = 0
-	new_memory.stack = coll.New()
+	new_memory.stack = (*wcStack)(unsafe.Pointer(coll.New()))
 	copy(new_memory.memory[0x200:], data)
 	copy(new_memory.memory[0x50:0x9F], FONT)
 	new_memory.delayTimer = 0
@@ -181,6 +181,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)
 		m = execute(m, insArg)
 		return m, doTick()
+	case MemoryMsg:
+		m.memory = msg.memory
+		return m, doTick()
+	case PCMsg:
+		m.pc = msg.pc
+		return m, doTick()
+	case IndexMsg:
+		m.index = msg.index
+		return m, doTick()
+	case RegsMsg:
+		m.regs = msg.regs
+		return m, doTick()
+	case StackMsg:
+		m.stack = (*wcStack)(unsafe.Pointer(coll.New()))
+		for i := len(msg.stack) - 1; i >= 0; i-- {
+			m.stack.Push(msg.stack[i])
+		}
+		return m, doTick()
+	case DelayTimerMsg:
+		m.delayTimer = msg.delayTimer
+		return m, doTick()
+	case SoundTimerMsg:
+		m.soundTimer = msg.soundTimer
+		return m, doTick()
+	case ShouldQuitMsg:
+		m.shouldQuit = msg.shouldQuit
+		return m, doTick()
 	default:
 		return m, doTick()
 	}
@@ -193,6 +220,14 @@ type (
 		key       byte
 		direction bool
 	}
+	MemoryMsg     struct{ memory [4096]byte }
+	PCMsg         struct{ pc int }
+	IndexMsg      struct{ index int16 }
+	RegsMsg       struct{ regs [16]byte }
+	StackMsg      struct{ stack []int }
+	DelayTimerMsg struct{ delayTimer byte }
+	SoundTimerMsg struct{ soundTimer byte }
+	ShouldQuitMsg struct{ shouldQuit bool }
 )
 
 func doTick() tea.Cmd {
@@ -518,7 +553,7 @@ func main() {
 	}
 	room := string(body)
 	log.Printf("%s [ROOM]", room)
-	p = tea.NewProgram(initializeMemory(false))
+	p := tea.NewProgram(initializeMemory(false))
 	timerTicker = time.NewTicker(time.Second / 60)
 	go func() {
 		for {
@@ -533,6 +568,43 @@ func main() {
 			fmt.Println("[WSCONNECTED]")
 		},
 		OnMessage: func(msg []byte, w *evtwebsocket.Conn) {
+			var data map[string]interface{}
+			err := json.Unmarshal(msg, &data)
+			if err != nil {
+				p.Send(tea.Quit)
+			}
+			mem, ok := data["memory"]
+			if ok {
+				p.Send(MemoryMsg{mem.([4096]byte)})
+			}
+			pc, ok := data["pc"]
+			if ok {
+				p.Send(PCMsg{pc.(int)})
+			}
+			index, ok := data["index"]
+			if ok {
+				p.Send(IndexMsg{index.(int16)})
+			}
+			regs, ok := data["regs"]
+			if ok {
+				p.Send(RegsMsg{regs.([16]byte)})
+			}
+			stack, ok := data["stack"]
+			if ok {
+				p.Send(StackMsg{stack.([]int)})
+			}
+			delayTimer, ok := data["delayTimer"]
+			if ok {
+				p.Send(DelayTimerMsg{delayTimer.(byte)})
+			}
+			soundTimer, ok := data["soundTimer"]
+			if ok {
+				p.Send(SoundTimerMsg{soundTimer.(byte)})
+			}
+			shouldQuit, ok := data["shouldQuit"]
+			if ok {
+				p.Send(ShouldQuitMsg{shouldQuit.(bool)})
+			}
 		},
 		OnError: func(err error) {
 			log.Printf("WS error: %s [ERR]", err.Error())
