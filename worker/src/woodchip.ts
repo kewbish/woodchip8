@@ -32,7 +32,7 @@ export class Woodchip implements DurableObject {
         });
       }
       const pair = new WebSocketPair();
-      await this.handleSession(pair[1], newReq, url, json);
+      await this.handleSession(pair[1], newReq, url);
       return new Response(null, { status: 101, webSocket: pair[0] });
     } else {
       return new Response(
@@ -42,12 +42,7 @@ export class Woodchip implements DurableObject {
     }
   }
 
-  async handleSession(
-    websocket: WebSocket,
-    request: Request,
-    url: URL,
-    json: any
-  ) {
+  async handleSession(websocket: WebSocket, request: Request, url: URL) {
     let memory: Int8Array =
       (await this.state.storage.get("memory")) || new Int8Array(4096);
     let pc: number = (await this.state.storage.get("pc")) || 0x200;
@@ -75,30 +70,44 @@ export class Woodchip implements DurableObject {
           case "/setMemory":
             await this.state.storage.put(
               "memory",
-              (json as { memory: Int8Array })["memory"]
+              (data as { memory: Int8Array })["memory"]
             );
             this.broadcast(
               JSON.stringify({
-                memory: (json as { memory: Int8Array })["memory"],
+                memory: (data as { memory: Int8Array })["memory"],
+              })
+            );
+            break;
+          case "/storeMemory":
+            const mem = (data as { memory: Int8Array })["memory"];
+            const cIndex = (data as { index: number })["index"];
+            const toData = (data as { toData: Int8Array })["toData"];
+            for (let i = 0; i < toData.length; i++) {
+              mem[cIndex + i] = toData[i];
+            }
+            await this.state.storage.put("memory", mem);
+            this.broadcast(
+              JSON.stringify({
+                memory: mem,
               })
             );
             break;
           case "/setPC":
-            await this.state.storage.put("pc", (json as { pc: number })["pc"]);
+            await this.state.storage.put("pc", (data as { pc: number })["pc"]);
             this.broadcast(
               JSON.stringify({
-                pc: (json as { pc: number })["pc"],
+                pc: (data as { pc: number })["pc"],
               })
             );
             break;
           case "/setIndex":
             await this.state.storage.put(
               "index",
-              (json as { index: number })["index"]
+              (data as { index: number })["index"]
             );
             this.broadcast(
               JSON.stringify({
-                index: (json as { index: number })["index"],
+                index: (data as { index: number })["index"],
               })
             );
             break;
@@ -116,8 +125,8 @@ export class Woodchip implements DurableObject {
           case "/setReg":
             let newRegs: Int8Array =
               (await this.state.storage.get("regs")) || new Int8Array(16);
-            newRegs[(json as { regIndex: number; value: number }).regIndex] = (
-              json as { regIndex: number; value: number }
+            newRegs[(data as { regIndex: number; value: number }).regIndex] = (
+              data as { regIndex: number; value: number }
             ).value;
             await this.state.storage.put("regs", newRegs);
             this.broadcast(JSON.stringify({ regs: newRegs }));
@@ -125,42 +134,42 @@ export class Woodchip implements DurableObject {
           case "/setStack":
             await this.state.storage.put(
               "stack",
-              (json as { stack: number[] })["stack"]
+              (data as { stack: number[] })["stack"]
             );
             this.broadcast(
-              JSON.stringify({ stack: (json as { stack: number[] })["stack"] })
+              JSON.stringify({ stack: (data as { stack: number[] })["stack"] })
             );
             break;
           case "/setDelayTimer":
             await this.state.storage.put(
               "delayTimer",
-              (json as { delayTimer: number })["delayTimer"]
+              (data as { delayTimer: number })["delayTimer"]
             );
             this.broadcast(
               JSON.stringify({
-                delayTimer: (json as { delayTimer: number })["delayTimer"],
+                delayTimer: (data as { delayTimer: number })["delayTimer"],
               })
             );
             break;
           case "/setSoundTimer":
             await this.state.storage.put(
               "soundTimer",
-              (json as { soundTimer: number })["soundTimer"]
+              (data as { soundTimer: number })["soundTimer"]
             );
             this.broadcast(
               JSON.stringify({
-                soundTimer: (json as { soundTimer: number })["soundTimer"],
+                soundTimer: (data as { soundTimer: number })["soundTimer"],
               })
             );
             break;
           case "/setShouldQuit":
             await this.state.storage.put(
               "shouldQuit",
-              (json as { shouldQuit: boolean })["shouldQuit"]
+              (data as { shouldQuit: boolean })["shouldQuit"]
             );
             this.broadcast(
               JSON.stringify({
-                shouldQuit: (json as { shouldQuit: boolean })["shouldQuit"],
+                shouldQuit: (data as { shouldQuit: boolean })["shouldQuit"],
               })
             );
             break;

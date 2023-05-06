@@ -15,12 +15,14 @@ export default {
         headers: { "Access-Control-Allow-Origin": "*" },
       });
     } else {
-      const reqCopy = request.clone();
-      const json = (await request.json()) as any;
-      if (!json || !json["name"]) {
+      const queryParams = new URLSearchParams(
+        new URL(request.url).searchParams
+      );
+      const name = queryParams.get("name");
+      if (!name) {
         return new Response("No Woodchip room name provided", { status: 400 });
       }
-      const dObj = env.WOODCHIP.get(json["name"]);
+      const dObj = env.WOODCHIP.get(env.WOODCHIP.idFromString(name));
       return dObj.fetch(request);
     }
   },

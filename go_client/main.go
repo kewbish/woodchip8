@@ -23,16 +23,18 @@ type model struct {
 	pc         int
 	index      int16
 	regs       [16]byte
-	stack      *coll.Stack
+	stack      *wcStack
 	screen     [32][64]bool
 	delayTimer byte
 	soundTimer byte
 	shouldQuit bool
 }
 
-var timerTicker *time.Ticker
-
-var websocket evtwebsocket.Conn
+var (
+	timerTicker *time.Ticker
+	websocket   evtwebsocket.Conn
+	p           *tea.Program
+)
 
 type instruction struct {
 	opCode byte
@@ -88,7 +90,10 @@ func initializeMemory(debug bool) model {
 	new_memory.delayTimer = 0
 	new_memory.soundTimer = 0
 	new_memory.shouldQuit = false
-	initializeWorkerMemory(new_memory)
+	err := initializeWorkerMemory(new_memory)
+	if err != nil {
+		panic(err)
+	}
 	if debug {
 		for i := 0; i < len(new_memory.memory); i++ {
 			fmt.Printf("%04x\t", new_memory.memory[i])
@@ -97,105 +102,31 @@ func initializeMemory(debug bool) model {
 	return new_memory
 }
 
-func initializeWorkerMemory(m model) {
-	done := make(chan bool, 8)
-	go func() {
-		postBody, _ := json.Marshal(map[string][]byte{"memory": m.memory[:]})
-		body := bytes.NewBuffer(postBody)
-		resp, err := http.Post("http://127.0.0.1:8787/setMemory", "application/json", body)
-		if err != nil {
-			log.Println("Could not set values to Worker...")
-			os.Exit(1)
-		}
-		defer resp.Body.Close()
-		done <- true
-	}()
-	go func() {
-		postBody, _ := json.Marshal(map[string]int{"pc": m.pc})
-		body := bytes.NewBuffer(postBody)
-		resp, err := http.Post("http://127.0.0.1:8787/setPC", "application/json", body)
-		if err != nil {
-			log.Println("Could not set values to Worker...")
-			os.Exit(1)
-		}
-		defer resp.Body.Close()
-		done <- true
-	}()
-	go func() {
-		postBody, _ := json.Marshal(map[string]int{"index": int(m.index) & 0xffff})
-		body := bytes.NewBuffer(postBody)
-		resp, err := http.Post("http://127.0.0.1:8787/setIndex", "application/json", body)
-		if err != nil {
-			log.Println("Could not set values to Worker...")
-			os.Exit(1)
-		}
-		defer resp.Body.Close()
-		done <- true
-	}()
-	go func() {
-		postBody, _ := json.Marshal(map[string]string{})
-		body := bytes.NewBuffer(postBody)
-		resp, err := http.Post("http://127.0.0.1:8787/resetRegs", "application/json", body)
-		if err != nil {
-			log.Println("Could not set values to Worker...")
-			os.Exit(1)
-		}
-		defer resp.Body.Close()
-		done <- true
-	}()
-	go func() {
-		var newStack *coll.Stack
-		*newStack = *m.stack
-		var values []int
-		for newStack.Len() != 0 {
-			values = append(values, newStack.Pop().(int))
-		}
-		postBody, _ := json.Marshal(map[string][]int{"stack": values})
-		body := bytes.NewBuffer(postBody)
-		resp, err := http.Post("http://127.0.0.1:8787/setStack", "application/json", body)
-		if err != nil {
-			log.Println("Could not set values to Worker...")
-			os.Exit(1)
-		}
-		defer resp.Body.Close()
-		done <- true
-	}()
-	go func() {
-		postBody, _ := json.Marshal(map[string]int{"delayTimer": int(m.index) & 0xffff})
-		body := bytes.NewBuffer(postBody)
-		resp, err := http.Post("http://127.0.0.1:8787/setDelayTimer", "application/json", body)
-		if err != nil {
-			log.Println("Could not set values to Worker...")
-			os.Exit(1)
-		}
-		defer resp.Body.Close()
-		done <- true
-	}()
-	go func() {
-		postBody, _ := json.Marshal(map[string]int{"soundTimer": int(m.index) & 0xffff})
-		body := bytes.NewBuffer(postBody)
-		resp, err := http.Post("http://127.0.0.1:8787/setSoundTimer", "application/json", body)
-		if err != nil {
-			log.Println("Could not set values to Worker...")
-			os.Exit(1)
-		}
-		defer resp.Body.Close()
-		done <- true
-	}()
-	go func() {
-		postBody, _ := json.Marshal(map[string]bool{"shouldQuit": false})
-		body := bytes.NewBuffer(postBody)
-		resp, err := http.Post("http://127.0.0.1:8787/setShouldQuit", "application/json", body)
-		if err != nil {
-			log.Println("Could not set values to Worker...")
-			os.Exit(1)
-		}
-		defer resp.Body.Close()
-	}()
-	close(done)
-	for i := 0; i < 8; i++ {
-		<-done
+type wcStack struct{ *coll.Stack }
+
+func (s *wcStack) getStackValues() []int {
+	var newStack *wcStack
+	*newStack = *s
+	var stackValues []int
+	for newStack.Len() != 0 {
+		stackValues = append(stackValues, newStack.Pop().(int))
 	}
+	return stackValues
+}
+
+func initializeWorkerMemory(m model) error {
+	toSend := []map[string]interface{}{{"commandPath": "/setMemory", "memory": m.memory}, {"commandPath": "/setPC", "pc": m.pc}, {"commandPath": "/setIndex", "index": m.index}, {"commandPath": "/resetRegs"}, {"commandPath": "/setStack", "stack": m.stack.getStackValues}, {"commandPath": "/setDelayTimer", "delayTimer": int(m.delayTimer) & 0xffff}, {"commandPath": "/setSoundTimer", "soundTimer": int(m.soundTimer) & 0xffff}, {"commandPath": "/setShouldQuit", "shouldQuit": false}}
+	for _, val := range toSend {
+		contents, err := json.Marshal(val)
+		if err != nil {
+			return err
+		}
+		err = websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m model) Init() tea.Cmd {
@@ -203,6 +134,17 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.shouldQuit {
+		return m, tea.Quit
+	}
+	contents, _ := json.Marshal(map[string]string{"commandPath": "/getShouldQuit"})
+	websocket.Send(evtwebsocket.Msg{Body: []byte(contents), Callback: func(b []byte, c *evtwebsocket.Conn) {
+		shouldQuit := false
+		contents := json.Unmarshal(b, &shouldQuit)
+		if shouldQuit {
+			m.shouldQuit = true
+		}
+	}})
 	if m.shouldQuit {
 		return m, tea.Quit
 	}
@@ -216,9 +158,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TimerTickMsg:
 		if m.delayTimer > 0 {
 			m.delayTimer -= 1
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setDelayTimer", "delayTimer": m.delayTimer})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		}
 		if m.soundTimer > 0 {
 			m.soundTimer -= 1
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setSoundTimer", "soundTimer": m.soundTimer})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		}
 		return m, doTick()
 	case TickMsg:
@@ -273,35 +219,53 @@ func execute(m model, ins instruction) model {
 			if res != nil {
 				m.pc = res.(int)
 			}
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setPC", "pc": m.pc})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		}
 		break
 	case 1:
 		m.pc = int(ins.nnn)
+		contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setPC", "pc": m.pc})
+		websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		break
 	case 2:
 		m.stack.Push(m.pc)
 		m.pc = int(ins.nnn)
+		contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setPC", "pc": m.pc})
+		websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
+		contents, _ = json.Marshal(map[string]interface{}{"commandPath": "/setStack", "stack": m.stack.getStackValues()})
+		websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		break
 	case 3:
 		if m.regs[ins.x] == ins.nn {
 			m.pc += 2
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setPC", "pc": m.pc})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		}
 		break
 	case 4:
 		if m.regs[ins.x] != ins.nn {
 			m.pc += 2
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setPC", "pc": m.pc})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		}
 		break
 	case 5:
 		if m.regs[ins.x] == m.regs[ins.y] {
 			m.pc += 2
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setPC", "pc": m.pc})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		}
 		break
 	case 6:
 		m.regs[ins.x] = ins.nn
+		contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setReg", "regIndex": ins.x, "value": ins.nn})
+		websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		break
 	case 7:
 		m.regs[ins.x] += ins.nn
+		contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setReg", "regIndex": ins.x, "value": ins.nn})
+		websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		break
 	case 8:
 		alu(&m, ins)
@@ -309,16 +273,24 @@ func execute(m model, ins instruction) model {
 	case 9:
 		if m.regs[ins.x] != m.regs[ins.y] {
 			m.pc += 2
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setPC", "pc": m.pc})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		}
 		break
 	case 0xa:
 		m.index = int16(ins.nnn) & 0xfff
+		contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setIndex", "index": m.index})
+		websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		break
 	case 0xb:
 		m.pc = int(ins.nnn) + int(m.regs[0])
+		contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setPC", "pc": m.pc})
+		websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		break
 	case 0xc:
 		m.regs[ins.x] = byte(rand.Intn(256)) & ins.nn
+		contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setReg", "regIndex": ins.x, "value": m.regs[ins.x]})
+		websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		break
 	case 0xd:
 		drawScreen(&m, ins)
@@ -337,6 +309,8 @@ func execute(m model, ins instruction) model {
 		case res := <-channel:
 			if res == rune(keyboard.KeyCtrlC) {
 				m.shouldQuit = true
+				contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setShouldQuit", "shouldQuit": m.shouldQuit})
+				websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 			}
 			result = string(res)
 		case <-time.After(time.Second / 60):
@@ -345,52 +319,74 @@ func execute(m model, ins instruction) model {
 		log.Printf("%s [SKIP]", result)
 		if (ins.nn == 0x9e && result == INTMAP[m.regs[ins.x]]) || (ins.nn == 0xa1 && result == "") {
 			m.pc += 2
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setPC", "pc": m.pc})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 		}
 		break
 	case 0xf:
 		switch ins.nn {
 		case 0x07:
 			m.regs[ins.x] = m.delayTimer
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setReg", "regIndex": ins.x, "value": m.regs[ins.x]})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 			break
 		case 0x15:
 			m.delayTimer = m.regs[ins.x]
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setDelayTimer", "delayTimer": m.regs[ins.x]})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 			break
 		case 0x18:
 			m.soundTimer = m.regs[ins.x]
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setSoundTimer", "soundTimer": m.regs[ins.x]})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 			break
 		case 0x1e:
 			m.index += int16(m.regs[ins.x])
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setIndex", "index": m.index})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 			break
 		case 0x0a:
 			char, _, _ := keyboard.GetSingleKey()
 			if char == rune(keyboard.KeyCtrlC) {
 				m.shouldQuit = true
+				contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setShouldQuit", "shouldQuit": m.shouldQuit})
+				websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 			}
 			log.Printf("%x [WAITINGFORKEY]", char)
 			val, ok := STRMAP[char]
 			if ok {
 				m.regs[ins.x] = val
+				contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setReg", "regIndex": ins.x, "value": m.regs[ins.x]})
+				websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 			}
 			break
 		case 0x29:
 			m.index = int16(0x50+5*(m.regs[ins.x]&0xf)) & 0xff
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setIndex", "index": m.index})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 			break
 		case 0x33:
 			number := m.regs[ins.x]
 			m.memory[m.index] = number / 100
 			m.memory[m.index+1] = (number % 100) / 10
 			m.memory[m.index+2] = number % 10
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/storeMemory", "index": m.index, "toData": m.memory[m.index : m.index+3]})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 			break
 		case 0x55:
 			var i byte
 			for i = 0; i <= ins.x; i++ {
 				m.memory[m.index+int16(i)] = m.regs[i]
 			}
+			contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/storeMemory", "index": m.index, "toData": m.memory[m.index : m.index+int16(i)+1]})
+			websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 			break
 		case 0x65:
 			var i byte
 			for i = 0; i <= ins.x; i++ {
 				m.regs[i] = m.memory[m.index+int16(i)]
+				contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setReg", "regIndex": i, "value": m.regs[i]})
+				websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
 			}
 			break
 		}
@@ -457,6 +453,12 @@ func alu(m *model, ins instruction) {
 		m.regs[0xf] = (oldY >> 7)
 		break
 	}
+	contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setReg", "regIndex": ins.x, "value": m.regs[ins.x]})
+	websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
+	if ins.n >= 4 {
+		contents, _ := json.Marshal(map[string]interface{}{"commandPath": "/setReg", "regIndex": 0xf, "value": m.regs[0xf]})
+		websocket.Send(evtwebsocket.Msg{Body: []byte(contents)})
+	}
 }
 
 func drawScreen(m *model, ins instruction) {
@@ -516,7 +518,7 @@ func main() {
 	}
 	room := string(body)
 	log.Printf("%s [ROOM]", room)
-	p := tea.NewProgram(initializeMemory(false))
+	p = tea.NewProgram(initializeMemory(false))
 	timerTicker = time.NewTicker(time.Second / 60)
 	go func() {
 		for {
@@ -536,7 +538,7 @@ func main() {
 			log.Printf("WS error: %s [ERR]", err.Error())
 		},
 	}
-	websocket.Dial("ws://127.0.0.1:8787/websocket", "")
+	websocket.Dial(fmt.Sprintf("ws://127.0.0.1:8787/websocket?name=%d", room), "")
 	if _, err := p.Run(); err != nil {
 		log.Printf("Error: %v", err)
 		os.Exit(1)
