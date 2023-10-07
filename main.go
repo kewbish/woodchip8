@@ -11,6 +11,8 @@ import (
 	"github.com/eiannone/keyboard"
 	beep "github.com/gen2brain/beeep"
 	coll "github.com/golang-collections/collections/stack"
+	"github.com/hajimehoshi/ebiten"
+	ebiten "github.com/hajimehoshi/ebiten"
 )
 
 type model struct {
@@ -55,6 +57,8 @@ var FONT []byte = []byte{
 	0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
+
+type Game struct{}
 
 var (
 	STRMAP map[rune]byte   = map[rune]byte{'1': 0, '2': 1, '3': 2, '4': 3, 'q': 4, 'w': 5, 'e': 6, 'r': 7, 'a': 8, 's': 9, 'd': 0xa, 'f': 0xb, 'z': 0xc, 'x': 0xd, 'c': 0xe, 'v': 0xf}
@@ -390,22 +394,22 @@ func (m model) View() string {
 	return s
 }
 
+func (g *Game) Update() error                { return nil }
+func (g *Game) Draw() (screen *ebiten.Image) { return nil }
+func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
+	return 640, 480
+}
+
 func main() {
 	os.Remove("debug.log")
 	f, _ := tea.LogToFile("debug.log", "debug")
 	defer f.Close()
 	timerTicker = time.NewTicker(time.Second / 60)
-	p := tea.NewProgram(initializeMemory(false))
-	go func() {
-		for {
-			select {
-			case <-timerTicker.C:
-				p.Send(TimerTickMsg{})
-			}
-		}
-	}()
-	if _, err := p.Run(); err != nil {
-		log.Printf("Error: %v", err)
-		os.Exit(1)
+	model := initializeMemory(false)
+	ebiten.SetWindowSize(640, 480)
+	ebiten.SetWindowTitle("woodchip8 simulator")
+	game := &Game{}
+	if err := ebiten.RunGame(game); err != nil {
+		panic(err)
 	}
 }
