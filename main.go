@@ -7,12 +7,11 @@ import (
 	"os"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/eiannone/keyboard"
 	beep "github.com/gen2brain/beeep"
 	coll "github.com/golang-collections/collections/stack"
 	"github.com/hajimehoshi/ebiten"
-	ebiten "github.com/hajimehoshi/ebiten"
+	"github.com/solarlune/ebitick"
 )
 
 type model struct {
@@ -58,7 +57,10 @@ var FONT []byte = []byte{
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
 
-type Game struct{}
+type Game struct {
+	timerSystem *ebitick.TimerSystem
+	model       model
+}
 
 var (
 	STRMAP map[rune]byte   = map[rune]byte{'1': 0, '2': 1, '3': 2, '4': 3, 'q': 4, 'w': 5, 'e': 6, 'r': 7, 'a': 8, 's': 9, 'd': 0xa, 'f': 0xb, 'z': 0xc, 'x': 0xd, 'c': 0xe, 'v': 0xf}
@@ -93,11 +95,7 @@ func initializeMemory(debug bool) model {
 	return new_memory
 }
 
-func (m model) Init() tea.Cmd {
-	return doTick()
-}
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+/*func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.shouldQuit {
 		return m, tea.Quit
 	}
@@ -142,13 +140,7 @@ type (
 		key       byte
 		direction bool
 	}
-)
-
-func doTick() tea.Cmd {
-	return tea.Tick(1/700*time.Second, func(t time.Time) tea.Msg {
-		return TickMsg(t)
-	})
-}
+)*/
 
 func execute(m model, ins instruction) model {
 	if m.soundTimer > 0 {
@@ -394,7 +386,10 @@ func (m model) View() string {
 	return s
 }
 
-func (g *Game) Update() error                { return nil }
+func (g *Game) Update(screen *ebiten.Image) error {
+	g.timerSystem.Update()
+	return nil
+}
 func (g *Game) Draw() (screen *ebiten.Image) { return nil }
 func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
 	return 640, 480
@@ -402,13 +397,25 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeigh
 
 func main() {
 	os.Remove("debug.log")
-	f, _ := tea.LogToFile("debug.log", "debug")
-	defer f.Close()
 	timerTicker = time.NewTicker(time.Second / 60)
 	model := initializeMemory(false)
 	ebiten.SetWindowSize(640, 480)
 	ebiten.SetWindowTitle("woodchip8 simulator")
-	game := &Game{}
+	game := &Game{timerSystem: ebitick.NewTimerSystem(), model: model}
+	game.timerSystem.After(1/700*time.Second, func() {
+		ins := model.memory[model.pc : model.pc+2]
+		model.pc += 2
+		opCode := (ins[0] >> 4) & 0xff
+		x := ins[0] & 0xf
+		y := (ins[1] >> 4) & 0xf
+		n := ins[1] & 0xf
+		nn := ins[1]
+		nnn := ((int16(ins[0]) << 8) | int16(ins[1])) & 0xfff
+		insArg := instruction{opCode, x, y, n, nn, nnn}
+		log.Printf("%x [INS]", ins)
+		log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)
+		model = execute(model, insArg)
+	})
 	if err := ebiten.RunGame(game); err != nil {
 		panic(err)
 	}
