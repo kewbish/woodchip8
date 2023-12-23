@@ -68,8 +68,8 @@ type Game struct {
 }
 
 var (
-	STRMAP map[rune]byte   = map[rune]byte{'1': 0, '2': 1, '3': 2, '4': 3, 'q': 4, 'w': 5, 'e': 6, 'r': 7, 'a': 8, 's': 9, 'd': 0xa, 'f': 0xb, 'z': 0xc, 'x': 0xd, 'c': 0xe, 'v': 0xf}
-	INTMAP map[byte]string = map[byte]string{0: "1", 1: "2", 2: "3", 3: "4", 4: "q", 5: "w", 6: "e", 7: "r", 8: "a", 9: "s", 0xa: "d", 0xb: "f", 0xc: "z", 0xd: "x", 0xe: "c", 0xf: "v"}
+	REG_TO_KEY_MAP map[byte]ebiten.Key = map[byte]ebiten.Key{1: ebiten.Key1, 2: ebiten.Key2, 3: ebiten.Key3, 0xc: ebiten.Key4, 4: ebiten.KeyQ, 5: ebiten.KeyW, 6: ebiten.KeyE, 0xd: ebiten.KeyR, 7: ebiten.KeyA, 8: ebiten.KeyS, 9: ebiten.KeyD, 0xe: ebiten.KeyF, 0xa: ebiten.KeyZ, 0: ebiten.KeyX, 0xb: ebiten.KeyC, 0xf: ebiten.KeyV}
+	KEY_TO_REG_MAP map[ebiten.Key]byte = map[ebiten.Key]byte{ebiten.Key1: 1, ebiten.Key2: 2, ebiten.Key3: 3, ebiten.Key4: 0xc, ebiten.KeyQ: 4, ebiten.KeyW: 5, ebiten.KeyE: 6, ebiten.KeyR: 0xd, ebiten.KeyA: 7, ebiten.KeyS: 8, ebiten.KeyD: 9, ebiten.KeyF: 0xe, ebiten.KeyZ: 0xa, ebiten.KeyX: 0xa, ebiten.KeyC: 0xb, ebiten.KeyV: 0xf}
 )
 
 func initializeMemory(debug bool) model {
@@ -77,7 +77,7 @@ func initializeMemory(debug bool) model {
 	if len(os.Args) > 1 {
 		path = os.Args[1]
 	} else {
-		path = "roms/audio.ch8"
+		path = "roms/keypad.ch8"
 	}
 	data, error := os.ReadFile(path)
 	if error != nil {
@@ -172,26 +172,9 @@ func execute(m model, ins instruction) model {
 		if m.regs[ins.x] < 0 || m.regs[ins.x] > 0xf {
 			break
 		}
-		// TODO - keybinds
-		/*channel := make(chan rune, 1)
-		go func() {
-			ch, _, _ := keyboard.GetSingleKey()
-			channel <- ch
-		}()
-		var result string
-		select {
-		case res := <-channel:
-			if res == rune(keyboard.KeyCtrlC) {
-				m.shouldQuit = true
-			}
-			result = string(res)
-		case <-time.After(time.Second / 60):
-			result = ""
-		}
-		log.Printf("%s [SKIP]", result)
-		if (ins.nn == 0x9e && result == INTMAP[m.regs[ins.x]]) || (ins.nn == 0xa1 && result == "") {
+		if (ins.nn == 0x9e && ebiten.IsKeyPressed(REG_TO_KEY_MAP[m.regs[ins.x]])) || (ins.nn == 0xa1 && !ebiten.IsKeyPressed(REG_TO_KEY_MAP[m.regs[ins.x]])) {
 			m.pc += 2
-		}*/
+		}
 		break
 	case 0xf:
 		switch ins.nn {
@@ -208,16 +191,14 @@ func execute(m model, ins instruction) model {
 			m.index += int16(m.regs[ins.x])
 			break
 		case 0x0a:
-			// TODO - keybinds
-			/*char, _, _ := keyboard.GetSingleKey()
-			if char == rune(keyboard.KeyCtrlC) {
-				m.shouldQuit = true
+			keys := make([]ebiten.Key, 16)
+			keys = inpututil.AppendJustPressedKeys(keys)
+			log.Printf("%v [KEYS, WAIT]", keys)
+			if len(keys) == 0 {
+				m.pc -= 2 // loop
+			} else {
+				m.regs[ins.x] = KEY_TO_REG_MAP[keys[0]]
 			}
-			log.Printf("%x [WAITINGFORKEY]", char)
-			val, ok := STRMAP[char]
-			if ok {
-				m.regs[ins.x] = val
-			}*/
 			break
 		case 0x29:
 			m.index = int16(0x50+5*(m.regs[ins.x]&0xf)) & 0xff
@@ -244,7 +225,12 @@ func execute(m model, ins instruction) model {
 	default:
 		break
 	}
-	m.soundTimer -= 1
+	if m.soundTimer > 0 {
+		m.soundTimer -= 1
+	}
+	if m.delayTimer > 0 {
+		m.delayTimer -= 1
+	}
 	return m
 }
 
@@ -333,7 +319,7 @@ func drawScreen(m *model, ins instruction) {
 }
 
 func (g *Game) Update() error {
-	keys := make([]ebiten.Key, 5)
+	keys := make([]ebiten.Key, 16)
 	keys = inpututil.AppendPressedKeys(keys)
 	if slices.Contains(keys, ebiten.KeyC) && slices.Contains(keys, ebiten.KeyControl) {
 		return errors.New("Terminated.")
@@ -416,7 +402,7 @@ func playAudio(g *Game) {
 	if err == nil && g.model.soundTimer > 0 {
 		g.audioPlayer.Play()
 	} else {
-		g.audioPlayer.Pause()
+		g.audioPlayer.Close()
 	}
 }
 
