@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"os"
 	"slices"
-	"time"
 
 	coll "github.com/golang-collections/collections/stack"
 	"github.com/hajimehoshi/ebiten/v2"
@@ -18,19 +17,23 @@ import (
 )
 
 type model struct {
-	memory     [4096]byte
-	pc         int
-	index      int16
-	regs       [16]byte
-	stack      *coll.Stack
-	screen     [32][64]bool
-	delayTimer byte
-	soundTimer byte
-	shouldQuit bool
-	debug      bool
+	memory      [4096]byte
+	pc          int
+	index       int16
+	regs        [16]byte
+	stack       *coll.Stack
+	screen      [32][64]bool
+	delayTimer  byte
+	soundTimer  byte
+	debug       bool
+	timerTicker int8
 }
 
-var timerTicker *time.Ticker
+type Game struct {
+	model        model
+	audioContext *audio.Context
+	audioPlayer  *audio.Player
+}
 
 type instruction struct {
 	opCode byte
@@ -61,12 +64,6 @@ var FONT []byte = []byte{
 	0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 }
 
-type Game struct {
-	model        model
-	audioContext *audio.Context
-	audioPlayer  *audio.Player
-}
-
 var (
 	REG_TO_KEY_MAP map[byte]ebiten.Key = map[byte]ebiten.Key{1: ebiten.Key1, 2: ebiten.Key2, 3: ebiten.Key3, 0xc: ebiten.Key4, 4: ebiten.KeyQ, 5: ebiten.KeyW, 6: ebiten.KeyE, 0xd: ebiten.KeyR, 7: ebiten.KeyA, 8: ebiten.KeyS, 9: ebiten.KeyD, 0xe: ebiten.KeyF, 0xa: ebiten.KeyZ, 0: ebiten.KeyX, 0xb: ebiten.KeyC, 0xf: ebiten.KeyV}
 	KEY_TO_REG_MAP map[ebiten.Key]byte = map[ebiten.Key]byte{ebiten.Key1: 1, ebiten.Key2: 2, ebiten.Key3: 3, ebiten.Key4: 0xc, ebiten.KeyQ: 4, ebiten.KeyW: 5, ebiten.KeyE: 6, ebiten.KeyR: 0xd, ebiten.KeyA: 7, ebiten.KeyS: 8, ebiten.KeyD: 9, ebiten.KeyF: 0xe, ebiten.KeyZ: 0xa, ebiten.KeyX: 0xa, ebiten.KeyC: 0xb, ebiten.KeyV: 0xf}
@@ -91,13 +88,11 @@ func initializeMemory(debug bool) model {
 	copy(new_memory.memory[0x50:0x9F], FONT)
 	new_memory.delayTimer = 0
 	new_memory.soundTimer = 0
-	new_memory.shouldQuit = false
-	new_memory.debug = false
+	new_memory.debug = debug
 	if debug {
 		for i := 0; i < len(new_memory.memory); i++ {
 			fmt.Printf("%04x\t", new_memory.memory[i])
 		}
-		new_memory.debug = true
 	}
 	return new_memory
 }
@@ -121,7 +116,6 @@ func execute(m model, ins instruction) model {
 		break
 	case 1:
 		m.pc = int(ins.nnn)
-		log.Printf("%x [PC]", m.pc)
 		break
 	case 2:
 		m.stack.Push(m.pc)
@@ -193,7 +187,9 @@ func execute(m model, ins instruction) model {
 		case 0x0a:
 			keys := make([]ebiten.Key, 16)
 			keys = inpututil.AppendJustPressedKeys(keys)
-			log.Printf("%v [KEYS, WAIT]", keys)
+			if m.debug {
+				log.Printf("%v [KEYS, WAIT]", keys)
+			}
 			if len(keys) == 0 {
 				m.pc -= 2 // loop
 			} else {
@@ -225,11 +221,13 @@ func execute(m model, ins instruction) model {
 	default:
 		break
 	}
-	if m.soundTimer > 0 {
-		m.soundTimer -= 1
-	}
-	if m.delayTimer > 0 {
-		m.delayTimer -= 1
+	if m.timerTicker == 0 {
+		if m.soundTimer > 0 {
+			m.soundTimer -= 1
+		}
+		if m.delayTimer > 0 {
+			m.delayTimer -= 1
+		}
 	}
 	return m
 }
@@ -318,33 +316,7 @@ func drawScreen(m *model, ins instruction) {
 	}
 }
 
-func (g *Game) Update() error {
-	keys := make([]ebiten.Key, 16)
-	keys = inpututil.AppendPressedKeys(keys)
-	if slices.Contains(keys, ebiten.KeyC) && slices.Contains(keys, ebiten.KeyControl) {
-		return errors.New("Terminated.")
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyA) || !g.model.debug {
-		ins := g.model.memory[g.model.pc : g.model.pc+2]
-		g.model.pc += 2
-		opCode := (ins[0] >> 4) & 0xff
-		x := ins[0] & 0xf
-		y := (ins[1] >> 4) & 0xf
-		n := ins[1] & 0xf
-		nn := ins[1]
-		nnn := ((int16(ins[0]) << 8) | int16(ins[1])) & 0xfff
-		insArg := instruction{opCode, x, y, n, nn, nnn}
-		log.Printf("%x [INS] %x [PC]", ins, g.model.pc)
-		log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)
-		log.Printf("%x %x %x [REGS]", g.model.regs[0], g.model.regs[1], g.model.index)
-		g.model = execute(g.model, insArg)
-		playAudio(g)
-	}
-
-	return nil
-}
-
-// from ebiten sinewave example
+// audio functions from ebiten sinewave example
 type stream struct {
 	position  int64
 	remaining []byte
@@ -406,6 +378,35 @@ func playAudio(g *Game) {
 	}
 }
 
+func (g *Game) Update() error {
+	keys := make([]ebiten.Key, 16)
+	keys = inpututil.AppendPressedKeys(keys)
+	if slices.Contains(keys, ebiten.KeyC) && slices.Contains(keys, ebiten.KeyControl) {
+		return errors.New("Terminated.")
+	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyP) || !g.model.debug {
+		ins := g.model.memory[g.model.pc : g.model.pc+2]
+		g.model.pc += 2
+		opCode := (ins[0] >> 4) & 0xff
+		x := ins[0] & 0xf
+		y := (ins[1] >> 4) & 0xf
+		n := ins[1] & 0xf
+		nn := ins[1]
+		nnn := ((int16(ins[0]) << 8) | int16(ins[1])) & 0xfff
+		insArg := instruction{opCode, x, y, n, nn, nnn}
+		if g.model.debug {
+			log.Printf("%x [INS] %x [PC]", ins, g.model.pc)
+			log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)
+			log.Printf("%x %x %x [REGS]", g.model.regs[0], g.model.regs[1], g.model.index)
+		}
+		g.model = execute(g.model, insArg)
+		playAudio(g)
+		g.model.timerTicker = (g.model.timerTicker + 1) % 9
+	}
+
+	return nil
+}
+
 func (g *Game) Draw(screen *ebiten.Image) {
 	for i := 0; i < 32; i++ {
 		for j := 0; j < 64; j++ {
@@ -421,16 +422,25 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeigh
 }
 
 func main() {
-	os.Remove("debug.log")
-	f, _ := os.OpenFile("debug.log", os.O_WRONLY|os.O_CREATE, 0o644)
-	defer f.Close()
-	log.SetOutput(f)
-	timerTicker = time.NewTicker(time.Second / 60)
+	debug := false
+
+	if debug {
+		os.Remove("debug.log")
+		f, _ := os.OpenFile("debug.log", os.O_WRONLY|os.O_CREATE, 0o644)
+		defer f.Close()
+		log.SetOutput(f)
+	}
+
 	model := initializeMemory(false)
+	game := &Game{model: model}
+
 	ebiten.SetWindowSize(640, 320)
 	ebiten.SetWindowTitle("woodchip8 simulator")
-	game := &Game{model: model}
+	ebiten.SetTPS(540)
+
 	if err := ebiten.RunGame(game); err != nil {
-		log.Print(err)
+		if debug {
+			log.Print(err)
+		}
 	}
 }
