@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/color"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	coll "github.com/golang-collections/collections/stack"
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/audio"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
 
@@ -60,7 +62,9 @@ var FONT []byte = []byte{
 }
 
 type Game struct {
-	model model
+	model        model
+	audioContext *audio.Context
+	audioPlayer  *audio.Player
 }
 
 var (
@@ -73,7 +77,7 @@ func initializeMemory(debug bool) model {
 	if len(os.Args) > 1 {
 		path = os.Args[1]
 	} else {
-		path = "roms/chip8-test.ch8"
+		path = "roms/audio.ch8"
 	}
 	data, error := os.ReadFile(path)
 	if error != nil {
@@ -99,9 +103,6 @@ func initializeMemory(debug bool) model {
 }
 
 func execute(m model, ins instruction) model {
-	if m.soundTimer > 0 {
-		// TODO: beep
-	}
 	switch ins.opCode {
 	case 0:
 		if ins.x == 0 && ins.y == 0xe && ins.n == 0 {
@@ -243,6 +244,7 @@ func execute(m model, ins instruction) model {
 	default:
 		break
 	}
+	m.soundTimer -= 1
 	return m
 }
 
@@ -350,9 +352,72 @@ func (g *Game) Update() error {
 		log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)
 		log.Printf("%x %x %x [REGS]", g.model.regs[0], g.model.regs[1], g.model.index)
 		g.model = execute(g.model, insArg)
+		playAudio(g)
 	}
 
 	return nil
+}
+
+// from ebiten sinewave example
+type stream struct {
+	position  int64
+	remaining []byte
+}
+
+func (s *stream) Read(buf []byte) (int, error) {
+	if len(s.remaining) > 0 {
+		n := copy(buf, s.remaining)
+		s.remaining = s.remaining[n:]
+		return n, nil
+	}
+
+	var origBuf []byte
+	if len(buf)%4 > 0 {
+		origBuf = buf
+		buf = make([]byte, len(origBuf)+4-len(origBuf)%4)
+	}
+
+	const length = int64(48000 / 440)
+	p := s.position / 4
+	for i := 0; i < len(buf)/4; i++ {
+		const max = 32767
+		b := int16(math.Sin(2*math.Pi*float64(p)/float64(length)) * max)
+		buf[4*i] = byte(b)
+		buf[4*i+1] = byte(b >> 8)
+		buf[4*i+2] = byte(b)
+		buf[4*i+3] = byte(b >> 8)
+		p++
+	}
+
+	s.position += int64(len(buf))
+	s.position %= length * 4
+
+	if origBuf != nil {
+		n := copy(origBuf, buf)
+		s.remaining = buf[n:]
+		return n, nil
+	}
+	return len(buf), nil
+}
+
+func (s *stream) Close() error {
+	return nil
+}
+
+func playAudio(g *Game) {
+	if g.audioContext == nil {
+		g.audioContext = audio.NewContext(48000)
+	}
+	var err error
+	if g.audioPlayer == nil {
+		g.audioPlayer, err = g.audioContext.NewPlayer(&stream{})
+		g.audioPlayer.SetVolume(0.3)
+	}
+	if err == nil && g.model.soundTimer > 0 {
+		g.audioPlayer.Play()
+	} else {
+		g.audioPlayer.Pause()
+	}
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
