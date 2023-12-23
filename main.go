@@ -1,17 +1,18 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"image/color"
 	"log"
 	"math/rand"
 	"os"
+	"slices"
 	"time"
 
-	"github.com/eiannone/keyboard"
-	beep "github.com/gen2brain/beeep"
 	coll "github.com/golang-collections/collections/stack"
-	"github.com/hajimehoshi/ebiten"
-	"github.com/solarlune/ebitick"
+	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
 
 type model struct {
@@ -24,6 +25,7 @@ type model struct {
 	delayTimer byte
 	soundTimer byte
 	shouldQuit bool
+	debug      bool
 }
 
 var timerTicker *time.Ticker
@@ -58,8 +60,7 @@ var FONT []byte = []byte{
 }
 
 type Game struct {
-	timerSystem *ebitick.TimerSystem
-	model       model
+	model model
 }
 
 var (
@@ -87,64 +88,19 @@ func initializeMemory(debug bool) model {
 	new_memory.delayTimer = 0
 	new_memory.soundTimer = 0
 	new_memory.shouldQuit = false
+	new_memory.debug = false
 	if debug {
 		for i := 0; i < len(new_memory.memory); i++ {
 			fmt.Printf("%04x\t", new_memory.memory[i])
 		}
+		new_memory.debug = true
 	}
 	return new_memory
 }
 
-/*func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.shouldQuit {
-		return m, tea.Quit
-	}
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" {
-			timerTicker.Stop()
-			return m, tea.Quit
-		}
-		return m, doTick()
-	case TimerTickMsg:
-		if m.delayTimer > 0 {
-			m.delayTimer -= 1
-		}
-		if m.soundTimer > 0 {
-			m.soundTimer -= 1
-		}
-		return m, doTick()
-	case TickMsg:
-		ins := m.memory[m.pc : m.pc+2]
-		m.pc += 2
-		opCode := (ins[0] >> 4) & 0xff
-		x := ins[0] & 0xf
-		y := (ins[1] >> 4) & 0xf
-		n := ins[1] & 0xf
-		nn := ins[1]
-		nnn := ((int16(ins[0]) << 8) | int16(ins[1])) & 0xfff
-		insArg := instruction{opCode, x, y, n, nn, nnn}
-		log.Printf("%x [INS]", ins)
-		log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)
-		m = execute(m, insArg)
-		return m, doTick()
-	default:
-		return m, doTick()
-	}
-}
-
-type (
-	TickMsg      time.Time
-	TimerTickMsg struct{}
-	KeypressMsg  struct {
-		key       byte
-		direction bool
-	}
-)*/
-
 func execute(m model, ins instruction) model {
 	if m.soundTimer > 0 {
-		beep.Beep(440, 1000/60)
+		// TODO: beep
 	}
 	switch ins.opCode {
 	case 0:
@@ -164,6 +120,7 @@ func execute(m model, ins instruction) model {
 		break
 	case 1:
 		m.pc = int(ins.nnn)
+		log.Printf("%x [PC]", m.pc)
 		break
 	case 2:
 		m.stack.Push(m.pc)
@@ -214,7 +171,8 @@ func execute(m model, ins instruction) model {
 		if m.regs[ins.x] < 0 || m.regs[ins.x] > 0xf {
 			break
 		}
-		channel := make(chan rune, 1)
+		// TODO - keybinds
+		/*channel := make(chan rune, 1)
 		go func() {
 			ch, _, _ := keyboard.GetSingleKey()
 			channel <- ch
@@ -232,7 +190,7 @@ func execute(m model, ins instruction) model {
 		log.Printf("%s [SKIP]", result)
 		if (ins.nn == 0x9e && result == INTMAP[m.regs[ins.x]]) || (ins.nn == 0xa1 && result == "") {
 			m.pc += 2
-		}
+		}*/
 		break
 	case 0xf:
 		switch ins.nn {
@@ -249,7 +207,8 @@ func execute(m model, ins instruction) model {
 			m.index += int16(m.regs[ins.x])
 			break
 		case 0x0a:
-			char, _, _ := keyboard.GetSingleKey()
+			// TODO - keybinds
+			/*char, _, _ := keyboard.GetSingleKey()
 			if char == rune(keyboard.KeyCtrlC) {
 				m.shouldQuit = true
 			}
@@ -257,7 +216,7 @@ func execute(m model, ins instruction) model {
 			val, ok := STRMAP[char]
 			if ok {
 				m.regs[ins.x] = val
-			}
+			}*/
 			break
 		case 0x29:
 			m.index = int16(0x50+5*(m.regs[ins.x]&0xf)) & 0xff
@@ -371,40 +330,15 @@ func drawScreen(m *model, ins instruction) {
 	}
 }
 
-func (m model) View() string {
-	s := ""
-	for _, line := range m.screen {
-		for _, col := range line {
-			if col {
-				s += "██"
-			} else {
-				s += "  "
-			}
-		}
-		s += "\n"
+func (g *Game) Update() error {
+	keys := make([]ebiten.Key, 5)
+	keys = inpututil.AppendPressedKeys(keys)
+	if slices.Contains(keys, ebiten.KeyC) && slices.Contains(keys, ebiten.KeyControl) {
+		return errors.New("Terminated.")
 	}
-	return s
-}
-
-func (g *Game) Update(screen *ebiten.Image) error {
-	g.timerSystem.Update()
-	return nil
-}
-func (g *Game) Draw() (screen *ebiten.Image) { return nil }
-func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
-	return 640, 480
-}
-
-func main() {
-	os.Remove("debug.log")
-	timerTicker = time.NewTicker(time.Second / 60)
-	model := initializeMemory(false)
-	ebiten.SetWindowSize(640, 480)
-	ebiten.SetWindowTitle("woodchip8 simulator")
-	game := &Game{timerSystem: ebitick.NewTimerSystem(), model: model}
-	game.timerSystem.After(1/700*time.Second, func() {
-		ins := model.memory[model.pc : model.pc+2]
-		model.pc += 2
+	if inpututil.IsKeyJustPressed(ebiten.KeyA) || !g.model.debug {
+		ins := g.model.memory[g.model.pc : g.model.pc+2]
+		g.model.pc += 2
 		opCode := (ins[0] >> 4) & 0xff
 		x := ins[0] & 0xf
 		y := (ins[1] >> 4) & 0xf
@@ -412,11 +346,40 @@ func main() {
 		nn := ins[1]
 		nnn := ((int16(ins[0]) << 8) | int16(ins[1])) & 0xfff
 		insArg := instruction{opCode, x, y, n, nn, nnn}
-		log.Printf("%x [INS]", ins)
+		log.Printf("%x [INS] %x [PC]", ins, g.model.pc)
 		log.Printf("%x %x %x %x %x %x [XP]", opCode, x, y, n, nn, nnn)
-		model = execute(model, insArg)
-	})
+		log.Printf("%x %x %x [REGS]", g.model.regs[0], g.model.regs[1], g.model.index)
+		g.model = execute(g.model, insArg)
+	}
+
+	return nil
+}
+
+func (g *Game) Draw(screen *ebiten.Image) {
+	for i := 0; i < 32; i++ {
+		for j := 0; j < 64; j++ {
+			if g.model.screen[i][j] {
+				screen.Set(j, i, color.White)
+			}
+		}
+	}
+}
+
+func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
+	return 64, 32
+}
+
+func main() {
+	os.Remove("debug.log")
+	f, _ := os.OpenFile("debug.log", os.O_WRONLY|os.O_CREATE, 0o644)
+	defer f.Close()
+	log.SetOutput(f)
+	timerTicker = time.NewTicker(time.Second / 60)
+	model := initializeMemory(false)
+	ebiten.SetWindowSize(640, 320)
+	ebiten.SetWindowTitle("woodchip8 simulator")
+	game := &Game{model: model}
 	if err := ebiten.RunGame(game); err != nil {
-		panic(err)
+		log.Print(err)
 	}
 }
